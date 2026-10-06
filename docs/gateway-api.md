@@ -29,3 +29,5 @@ Confirm Gateway conditions `Accepted` and `Programmed`, and HTTPRoute conditions
 The overlay removes the base's same-namespace pod ingress allowance and grants the Cilium proxy identity access to workerd. Cilium assigns Gateway traffic the reserved `ingress` identity; selecting Envoy pods by namespace would not correctly describe this flow. Cluster-wide policies must also allow approved clients to reach the Gateway proxy. Apply source restrictions there according to your environment rather than trusting forwarded headers in Aether.
 
 TLS terminates at the Gateway; the backend hop to workerd is HTTP within the cluster. Backend TLS, enterprise client-source rules, DNS/address allocation, and actual cluster routing are operator configuration. Kubernetes render checks do not prove Cilium dataplane or WebSocket behavior.
+
+For PostgreSQL, S3, and private on-prem inference together, use the [model gateway overlay](model-gateway.md#kubernetes-with-cilium-gateway-api). It reuses the same Gateway API component.

@@ -13,11 +13,11 @@ There are four separate execution paths. Their configuration is deliberately exp
 
 The local launcher passes arguments to the pinned upstream `scripts/run-local.ts`, including `--port 9000`. It uses upstream development authentication; create an account called `admin` for administrator access. It does not consume `deployment.jsonc` or translate Cloudflare Access into OIDC. Preserve upstream development storage if you need evaluation data, but do not treat it as the eventual production storage format.
 
-The diagnostic foundation intentionally has no model keys, S3 credentials, sign-in implementation, or dynamic user-code endpoint. The separate [native workspace](standalone-workspace.md) hosts the upstream graph and password authentication, using local storage protocol Workers; it still has no external models, browser rendering, S3 or OIDC integration. Its probes verify primitives we need for the port. They are not an agent API. The readiness probe performs a read through a service binding into the SQLite-backed Durable Object; liveness checks only the gateway so a storage outage does not trigger continuous liveness restarts.
+The diagnostic foundation intentionally has no model keys, S3 credentials, sign-in implementation, or dynamic user-code endpoint. The separate [native workspace](standalone-workspace.md) hosts the upstream graph and password authentication, using local storage protocol Workers; it supports user-provided [S3](s3-storage.md), [PostgreSQL KV](postgres-storage.md), and a [scoped model gateway](model-gateway.md). Browser rendering and OIDC remain unimplemented. Its probes verify primitives we need for the port. They are not an agent API. The readiness probe performs a read through a service binding into the SQLite-backed Durable Object; liveness checks only the gateway so a storage outage does not trigger continuous liveness restarts.
 
 ## Target architecture
 
-The core Worker graph and local state now run. External identity, database/blob adapters, browser rendering and model access below remain planned:
+The core Worker graph and local state now run. S3 blobs, PostgreSQL KV, and scoped model transport are available. External identity, R2 metadata migration, and browser rendering below remain planned:
 
 ```mermaid
 flowchart TD
@@ -67,7 +67,7 @@ Native Gadget definitions should retain upstream's `globalOutbound: null`, empty
 The graph is bundled from the pinned upstream configs; build-time Miniflare KV/R2 Workers supply persistent local protocol services. HTTP/WebSocket authentication, account isolation, workspace/admin state, Gatekeeper provisioning, KV avatars and bundled R2 Blueprints pass native restart tests. Scheduled callback delivery and model-driven Gadget creation still need acceptance tests.
 
 3. **Self-hosted persistence.** Implement metadata and blob adapters. Use real PostgreSQL and S3-compatible services for contract tests, including binary and streaming round trips, list pagination, expiration and failure behavior. Verify create/reopen/delete of a Blueprint, avatar and Context collection from the UI after restart.
-4. **Identity and models.** Add an Authentik auth Gatekeeper or verified OIDC adapter and an internal model gateway. Verify issuer, audience, signature, expiry, session revocation and subject mapping. Derive identity from verified tokens or an authenticated internal channel; do not trust arbitrary forwarded identity headers. Test account isolation and approved resource grants.
+4. **Identity and models.** Scoped internal model access is implemented. Add an Authentik auth Gatekeeper or verified OIDC adapter. Verify issuer, audience, signature, expiry, session revocation and subject mapping. Derive identity from verified tokens or an authenticated internal channel; do not trust arbitrary forwarded identity headers. Test account isolation and approved resource grants.
 5. **Browser and integrations.** Implement browser rendering, then port a custom Gatekeeper followed by GitHub. Verify Gadget creation, human approval and denial, screenshot/PDF export, scheduled work after restart, and cross-account isolation.
 6. **Operational pilot.** Exercise CSI rescheduling, volume permissions, stopped-runtime backup and restore, upgrades with unchanged namespace identities, capacity limits, and credential rotation. Validate VM isolation before accepting generated user code. Horizontal scaling needs a separate ownership/fencing/routing design.
 

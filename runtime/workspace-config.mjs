@@ -35,11 +35,12 @@ export function validateWorkerConfig(config) {
 }
 
 /** Compile the pinned storage Workers and upstream graph into a native workerd config. */
-export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage = "local", kvStorage = "local" }) {
+export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage = "local", kvStorage = "local", modelGateway = false }) {
   if (!/^[a-zA-Z0-9_-]+$/.test(namespace)) throw new Error("Invalid permanent namespace identity");
   if (!["local", "s3"].includes(storage)) throw new Error("Unsupported blob storage mode");
   if (!["local", "postgres"].includes(kvStorage)) throw new Error("Unsupported KV storage mode");
   if (kvStorage === "postgres" && !namespace.startsWith("aether-tenant-")) throw new Error("PostgreSQL KV requires a tenant artifact");
+  if (modelGateway && !namespace.startsWith("aether-tenant-")) throw new Error("Model gateway requires a tenant artifact");
   const kvOptions = KV_PLUGIN.options.parse({ kvNamespaces: Object.fromEntries(workers.flatMap(({ config }) =>
     (config.kv_namespaces || []).map(({ binding }) => [binding, `${namespace}-${config.name}-${binding}`]))) });
   const r2Options = R2_PLUGIN.options.parse({ r2Buckets: Object.fromEntries(workers.flatMap(({ config }) =>
@@ -107,6 +108,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     return { name: config.name, worker: {
       modules, compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags || [],
       bindings,
+      ...(modelGateway && config.name === "workshop-backend" ? { globalOutbound: { name: "aether:model-outbound" } } : {}),
       ...(classes.length ? {
         durableObjectNamespaces: classes.map(className => ({ className, uniqueKey: `${namespace}-${config.name}-${className}`, enableSql: true })),
         durableObjectStorage: { localDisk: "aether:do-storage" },
@@ -138,6 +140,15 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     } },
   );
   if (kvStorage === "postgres") services.push({ name: "aether:postgres-endpoint", external: { address: "127.0.0.1:9002", http: {} } });
+  if (modelGateway) services.push(
+    { name: "aether:model-endpoint", external: { address: "127.0.0.1:9003", http: {} } },
+    { name: "aether:model-outbound", worker: {
+      compatibilityDate: "2026-09-04",
+      modules: [{ name: "model-outbound.js", esModule: await readFile(join(root, "src/model-outbound.js"), "utf8") }],
+      bindings: [{ name: "ADAPTER", service: { name: "aether:model-endpoint" } },
+        { name: "TENANT", text: namespace.slice("aether-tenant-".length) }],
+    } },
+  );
   const sharedRoot = join(dirname(require.resolve("miniflare")), "workers/shared");
   const config = {
     services,

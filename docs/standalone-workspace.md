@@ -41,55 +41,10 @@ Build dependencies must already be installed. The build pipeline is not an offli
 
 This storage is supplied by Miniflare **5.20260801.1-alpha**'s pinned protocol Workers, compiled into the config. The Miniflare Node server, Node proxy bindings, debug/control endpoints, and optional Node loopback service are not shipped. The running process is native workerd **1.20261006.1**. These local protocol Workers are evaluation infrastructure. The optional [S3 adapter](s3-storage.md) moves R2 blob contents to a user-provided endpoint while keeping metadata local; [PostgreSQL KV](postgres-storage.md) is also available; application Durable Objects and R2 metadata remain local.
 
-The binary config embeds code, not build-host absolute paths or credentials. Disk paths are supplied at launch. Keep the artifact, permanent namespace identities and all three state directories together. Stop workerd before taking an initial file backup. This is a fresh state layout; it does not import the diagnostic counter's database or Wrangler development data.
-
-## Verified behavior and current limits
-
-The integration test starts real native workerd processes and exercises:
-
-- Frontend and SPA asset serving, MIME types, HEAD requests, ETags, and missing-asset handling.
-- Real password-account signup/login, rejected wrong passwords, and authenticated HTTP and WebSocket RPC.
-- Administrator privileges, denied admin access for another account, and denied cross-account access to a private workspace.
-- Context and Scheduler account provisioning through native Worker RPC.
-- Workspace creation/title changes and administrator settings across a restart.
-- Binary avatar round trips through the KV protocol before and after restart.
-- Bundled format Blueprint installation through KV/R2 and presence after restart.
-
-The test uses synthetic password hashes, without storing or printing real credentials. It does not exercise browser UI clicks or the frontend's Argon2 implementation; the production frontend code is bundled unchanged.
-
-All ambient outbound networking is denied, and generated Gadgets retain upstream's `globalOutbound: null`. Therefore external inference, web fetch, OAuth connectors, Git-backed Artifacts, and browser/PDF/screenshot export are unavailable. The UI may display upstream controls for these features; configuring a provider key does not enable network access. This milestone is workspace evaluation, not an end-to-end AI agent deployment.
-
-Scheduler provisioning is tested, but alarm delivery and scheduled callbacks after rescheduling are not. The original diagnostic runtime independently tests native WorkerLoader loading and denied ambient networking. Model-driven Gadget creation, cross-Gadget isolation, storage expiration/conditional-write contracts, and a real Kubernetes rollout remain later acceptance tests.
-
-The generator rejects unknown top-level upstream configuration and unsupported DO migrations instead of discarding new required platform bindings. The Browser binding is explicitly omitted because the pinned upstream supports its absence; this is recorded as a disabled feature in the artifact manifest. Compatibility dates and flags come from each upstream config, and module order preserves the entry module.
-
-## Kubernetes
-
-Build the workspace artifact first, then package it:
-
-```sh
-docker build -f runtime/Dockerfile.workspace -t registry.example.com/aether/workspace:0.2.0 runtime
-docker push registry.example.com/aether/workspace:0.2.0
-```
-
-Set your actual image in `deploy/kubernetes/overlays/workspace/kustomization.yaml`. Set the CSI storage class in the base manifest. Change `AETHER_ADMINS` to your bootstrap usernames, and confirm that the `kata` RuntimeClass works:
-
-```sh
-kubectl get runtimeclass kata
-kubectl kustomize deploy/kubernetes/overlays/workspace
-kubectl apply -k deploy/kubernetes/overlays/workspace
-kubectl -n aether rollout status statefulset/aether
-kubectl -n aether port-forward service/aether 8080:8080
-```
-
-This overlay uses a VM-backed runtime because the workspace allows code-bearing Gadgets. It retains one replica, the private service, the persistent volume, a read-only root filesystem, non-root UID/GID and default-deny egress. No public ingress is installed. Kata configuration and CSI rescheduling must be validated in your cluster.
-
-The container includes only native workerd and the generated artifact; Node.js, Wrangler and Miniflare's Node server are absent. Use a fresh PVC if evaluating alongside the earlier diagnostic image. If intentionally upgrading the same StatefulSet, its existing diagnostic state can remain on the PVC; workspace state is in separate subdirectories. Never run both processes against the same active workspace directory.
-
-## Next work
-
-Implement a narrowly scoped internal model-gateway binding and its capability grants, then Authentik sign-in. Preserve account/approval isolation when adding these services. R2 metadata migration, browser rendering, scheduler recovery tests, and operational recovery follow; adding replicas requires a separate distributed DO ownership design.
-
-For tenant-specific artifacts, user-provided S3 storage, and optional COSI credentials, see [S3 storage](s3-storage.md). For external HTTPS routing using Cilium, see [Gateway API](gateway-api.md).
+The binary config embeds code, not build-host absolute paths or credentials. Disk paths are supplied at launch. Keep the artifact, permanent namespace identities and all three state directori…1107 tokens truncated…torage](s3-storage.md). For external HTTPS routing using Cilium, see [Gateway API](gateway-api.md).
 
 For external KV records and database role isolation, see [PostgreSQL storage](postgres-storage.md).
+
+## Optional on-prem inference
+
+Tenant builds can enable a [scoped model gateway](model-gateway.md) with `AETHER_MODEL_GATEWAY=true`. Default artifacts retain denied ambient networking. The private adapter supports user-provided OpenAI-compatible and Anthropic endpoints without enabling Gadget network access.
