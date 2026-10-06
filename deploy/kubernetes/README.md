@@ -1,6 +1,6 @@
 # Kubernetes runtime foundation
 
-These manifests deploy the standalone diagnostic runtime. The full Cloudflare OS workspace is a later port described in [self-hosting](../../docs/self-hosting.md).
+These manifests deploy the standalone diagnostic runtime. For the native workspace use the [workspace guide](../../docs/standalone-workspace.md); tenant storage and external routing are described in [S3 storage](../../docs/s3-storage.md) and [Cilium Gateway API](../../docs/gateway-api.md).
 
 ## Build and configure
 
