@@ -62,6 +62,8 @@ export async function createAdapter(config) {
       await new Promise(resolve => waiting.push(resolve));
     } else active++;
     try {
+      if (response.destroyed) return;
+      response.setTimeout(30000, () => response.destroy());
       if (request.url === "/readyz" && request.method === "GET") {
         const mapping = await pool.query("SELECT tenant_id FROM aether.tenant_roles WHERE role_name = session_user");
         if (mapping.rows[0]?.tenant_id !== config.tenantId) throw new Error("Database mapping changed");
@@ -133,6 +135,14 @@ export async function createAdapter(config) {
       else response.destroy();
       if (!(error instanceof RequestError)) console.error(JSON.stringify({ event: "postgres.request.failed", code: /^[0-9A-Z]{5}$/.test(error.code) ? error.code : "unknown" }));
     } finally {
+      // Keep the slot while a binary response drains, so slow readers cannot retain
+      // an unlimited number of 25 MiB PostgreSQL buffers outside the request limit.
+      if (!response.writableFinished && !response.destroyed) {
+        await new Promise(resolve => {
+          response.once("finish", resolve);
+          response.once("close", resolve);
+        });
+      }
       const next = waiting.shift();
       if (next) next(); else active--;
     }
