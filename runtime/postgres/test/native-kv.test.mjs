@@ -41,6 +41,12 @@ test('PostgreSQL role isolation and native KV contracts survive runtime restart'
   try {
     await assert.rejects(createAdapter({...config,tenantId:'other'}),/identity mismatch/);
     await assert.rejects(createAdapter({...config,database:fixture.adminConfig}),/administrative privileges/);
+    await fixture.admin.query('ALTER SCHEMA aether OWNER TO aether_test_app');
+    try { await assert.rejects(createAdapter(config),/protected non-owned/); }
+    finally { await fixture.admin.query('ALTER SCHEMA aether OWNER TO postgres'); }
+    await fixture.admin.query('ALTER DATABASE aether_test OWNER TO aether_test_app');
+    try { await assert.rejects(createAdapter(config),/must not own the database/); }
+    finally { await fixture.admin.query('ALTER DATABASE aether_test OWNER TO postgres'); }
     await fixture.admin.query('ALTER TABLE aether.kv_entries DISABLE ROW LEVEL SECURITY');
     try { await assert.rejects(createAdapter(config),/protected non-owned/); }
     finally { await fixture.admin.query('ALTER TABLE aether.kv_entries ENABLE ROW LEVEL SECURITY'); }

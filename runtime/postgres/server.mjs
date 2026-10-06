@@ -32,12 +32,15 @@ export async function verifyDatabase(pool, tenantId) {
     FROM pg_roles r JOIN memberships p USING (oid)`);
   if (!roles.rowCount || roles.rows.some(role => Object.values(role).some(Boolean))) throw new Error("Runtime database role must not have administrative privileges");
   const tables = await pool.query(`SELECT c.relrowsecurity, c.relforcerowsecurity,
-    pg_has_role(session_user, c.relowner, 'MEMBER') AS owns_table
+    pg_has_role(session_user, c.relowner, 'MEMBER') AS owns_table,
+    pg_has_role(session_user, n.nspowner, 'MEMBER') AS owns_schema
     FROM pg_class c JOIN pg_namespace n ON n.oid = c.relnamespace
     WHERE n.nspname = 'aether' AND c.relname IN ('kv_entries', 'tenant_roles')`);
-  if (tables.rowCount !== 2 || tables.rows.some(table => !table.relrowsecurity || !table.relforcerowsecurity || table.owns_table)) {
+  if (tables.rowCount !== 2 || tables.rows.some(table => !table.relrowsecurity || !table.relforcerowsecurity || table.owns_table || table.owns_schema)) {
     throw new Error("Runtime database role requires protected non-owned tables");
   }
+  const database = await pool.query("SELECT pg_has_role(session_user, datdba, 'MEMBER') AS owns_database FROM pg_database WHERE datname = current_database()");
+  if (database.rows[0]?.owns_database !== false) throw new Error("Runtime database role must not own the database");
   const schema = await pool.query("SELECT version FROM aether.schema_version");
   if (schema.rowCount !== 1 || schema.rows[0].version !== 1) throw new Error("Unsupported PostgreSQL KV schema");
   const mapping = await pool.query("SELECT tenant_id FROM aether.tenant_roles WHERE role_name = session_user");

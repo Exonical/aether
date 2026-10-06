@@ -8,7 +8,7 @@ Application Durable Objects and R2 metadata remain local SQLite. R2 blob content
 
 Run `runtime/postgres/migrations/001-kv.sql` once in a dedicated application database as a schema administrator. The migration is transactional and intentionally fails if the schema/group already exists; it does not overwrite an existing installation. It creates schema version 1, a login-to-tenant mapping, the KV table, a permission group, and forced row-level security.
 
-Create a dedicated LOGIN role per tenant through your normal database administration and secrets workflow. It must have no superuser, BYPASSRLS, CREATEDB, CREATEROLE, replication, or schema/table ownership privileges, including through membership in another role. Grant only application permissions and register its tenant:
+Create a dedicated LOGIN role per tenant through your normal database administration and secrets workflow. It must have no superuser, BYPASSRLS, CREATEDB, CREATEROLE, replication, or database/schema/table ownership privileges, including through membership in another role. Grant only application permissions and register its tenant:
 
 ```sh
 psql -v ON_ERROR_STOP=1 -f runtime/postgres/migrations/001-kv.sql
