@@ -2,7 +2,7 @@
 
 Aether consumes an existing S3-compatible endpoint. It does not install or administer MinIO, SeaweedFS, Ceph, or another object store. COSI is an optional source of bucket credentials, not a runtime dependency.
 
-The first integration moves **R2 blob contents** to S3. The pinned R2 Worker still provides the native R2 binding contract, including metadata, list operations, conditional writes, and multipart assembly. R2 metadata, KV metadata/values, and application Durable Objects remain SQLite on the tenant's PVC. S3 keys are opaque immutable blobs, not the application's R2 object names. Preserve the metadata volume and bucket together for recovery. External PostgreSQL is not implemented in this change.
+The first integration moves **R2 blob contents** to S3. The pinned R2 Worker still provides the native R2 binding contract, including metadata, list operations, conditional writes, and multipart assembly. R2 metadata, KV metadata/values, and application Durable Objects remain SQLite on the tenant's PVC. S3 keys are opaque immutable blobs, not the application's R2 object names. Preserve the metadata volume and bucket together for recovery. [PostgreSQL KV](postgres-storage.md) can independently move KV records externally; R2 metadata and application Durable Objects remain local.
 
 ## Tenant boundary
 

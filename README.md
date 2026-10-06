@@ -2,7 +2,7 @@
 
 A self-hosted AI workspace and application runtime, built on [Cloudflare OS](https://github.com/cloudflare/cloudflare-os) and [workerd](https://github.com/cloudflare/workerd), targeting Kubernetes.
 
-**Status: standalone workspace evaluation.** Router, Workshop, Context, Scheduler, and the frontend now run directly in workerd with persistent local KV, R2, and Durable Object state. Password accounts, workspace management, and administrator settings are tested. User-provided S3 blob storage, tenant-specific runtime artifacts, and Cilium Gateway API manifests are available. External model access, browser rendering, Authentik, and PostgreSQL are not integrated yet. The original diagnostic runtime and Cloudflare-hosted deployment remain available.
+**Status: standalone workspace evaluation.** Router, Workshop, Context, Scheduler, and the frontend now run directly in workerd with persistent local KV, R2, and Durable Object state. Password accounts, workspace management, and administrator settings are tested. User-provided S3 blob storage, tenant-specific runtime artifacts, and Cilium Gateway API manifests are available. PostgreSQL can back native KV namespaces with dedicated tenant roles and row-level security. External model access, browser rendering, and Authentik are not integrated yet. The original diagnostic runtime and Cloudflare-hosted deployment remain available.
 
 ## Run the standalone workspace
 
@@ -75,11 +75,11 @@ This deploys the diagnostic runtime. For the workspace image and Kata overlay, u
 
 ## Tenant storage and external routing
 
-Use the [S3 and tenant deployment guide](docs/s3-storage.md) for an existing S3-compatible endpoint and optional COSI credentials. The [Cilium Gateway API guide](docs/gateway-api.md) adds HTTPS routing through Gateway and HTTPRoute resources. Aether does not install an object store. Tenant deployments have separate runtime identities, PVCs, and credentials; tenant provisioning and OIDC remain future work.
+Use the [S3 and tenant deployment guide](docs/s3-storage.md) for an existing S3-compatible endpoint and optional COSI credentials. The [PostgreSQL KV guide](docs/postgres-storage.md) adds external metadata and avatar storage with database-enforced tenant isolation. The [Cilium Gateway API guide](docs/gateway-api.md) adds HTTPS routing through Gateway and HTTPRoute resources. Aether does not install an object store. Tenant deployments have separate runtime identities, PVCs, and credentials; tenant provisioning and OIDC remain future work.
 
 ## Next implementation milestone
 
-Add explicitly scoped model-gateway access and Authentik sign-in, then implement PostgreSQL metadata and browser rendering. KV and Durable Object state remain local SQLite; R2 blobs can use a user-provided S3-compatible endpoint through the private adapter. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
+Add explicitly scoped model-gateway access and Authentik sign-in, then implement R2 metadata migration and browser rendering. Durable Object and R2 metadata state remain local SQLite; KV can use PostgreSQL, and R2 blobs can use a user-provided S3-compatible endpoint through the private adapter. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
 
 | Path | Purpose |
 | --- | --- |

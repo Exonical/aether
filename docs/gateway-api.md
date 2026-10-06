@@ -9,7 +9,7 @@ Aether uses Kubernetes Gateway API for external routing. The example assumes an 
 - An HTTPRoute forwarding the entire application to `Service/aether:8080`, including upstream WebSocket RPC.
 - A Cilium policy admitting traffic from the `ingress` identity to workerd on TCP 8080.
 
-No Kubernetes Ingress resources are created. The private workspace overlays remain available without external routing. To use the Gateway with local blob storage, change the gateway overlay's base from `../workspace-s3` to `../workspace` and adjust its namespace.
+No Kubernetes Ingress resources are created. The private workspace overlays remain available without external routing. For PostgreSQL KV plus S3 use `deploy/kubernetes/overlays/workspace-postgres-gateway`. Both overlays use the shared component in `deploy/kubernetes/components/gateway`; set the hostname there. For local blob storage, change the gateway overlay's base from `../workspace-s3` to `../workspace` and adjust its namespace.
 
 ## Configure and apply
 

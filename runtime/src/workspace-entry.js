@@ -7,8 +7,9 @@ export default {
     }
     if (pathname === "/readyz") {
       if (request.method !== "GET") return new Response(null, { status: 405, headers: { Allow: "GET" } });
-      // Read via the real storage protocol; DO instantiation verifies the local SQLite disk.
-      await env.BLUEPRINTS.get(".adminConfig");
+      // Read through the selected native KV backend before admitting traffic.
+      try { await env.BLUEPRINTS.get(".adminConfig"); }
+      catch { return Response.json({ status: "unavailable" }, { status: 503 }); }
       return Response.json({ status: "ready", stage: "standalone-workspace" });
     }
     return env.ROUTER.fetch(request);

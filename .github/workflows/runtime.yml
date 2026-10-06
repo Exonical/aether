@@ -22,6 +22,8 @@ jobs:
           kubectl kustomize deploy/kubernetes/overlays/kata > /tmp/aether-kata.yaml
           kubectl kustomize deploy/kubernetes/overlays/workspace-s3 > /tmp/aether-s3.yaml
           kubectl kustomize deploy/kubernetes/overlays/workspace-gateway > /tmp/aether-gateway.yaml
+          kubectl kustomize deploy/kubernetes/overlays/workspace-postgres > /tmp/aether-postgres.yaml
+          kubectl kustomize deploy/kubernetes/overlays/workspace-postgres-gateway > /tmp/aether-postgres-gateway.yaml
       - name: Build runtime image
         run: docker build -f runtime/Dockerfile -t aether-runtime:ci runtime
       - name: Verify container startup and read-only filesystem
@@ -32,6 +34,17 @@ jobs:
           curl --fail -X POST http://127.0.0.1:8080/internal/probes/worker
   workspace:
     runs-on: ubuntu-24.04
+    services:
+      postgres:
+        image: postgres:18
+        env:
+          POSTGRES_DB: aether_test
+          POSTGRES_PASSWORD: aether-test-secret
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d aether_test"
+          --health-interval 5s --health-timeout 5s --health-retries 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -43,11 +56,27 @@ jobs:
           cache-dependency-path: runtime/package-lock.json
       - run: npm install --global pnpm@11.17.0
       - run: npm ci --prefix runtime
+      - run: npm ci --prefix runtime/postgres --ignore-scripts
+      - name: Verify native KV contracts and PostgreSQL role isolation
+        run: npm test --prefix runtime/postgres
+        env:
+          AETHER_TEST_PGHOST: 127.0.0.1
       - run: pnpm --dir cloudflare-os install --frozen-lockfile
       - run: npm run workspace:build --prefix runtime
         env:
           AETHER_TENANT_ID: acme
       - run: npm run workspace:test --prefix runtime
+      - name: Verify full workspace with PostgreSQL KV
+        run: npm run workspace:test --prefix runtime
+        env:
+          AETHER_TENANT_ID: acme
+          AETHER_KV_STORAGE: postgres
+          PGHOST: 127.0.0.1
+          PGDATABASE: aether_test
+          PGUSER: aether_acme
+          PGPASSWORD: aether-test-secret
+          AETHER_PG_SSL_MODE: disable
+          AETHER_PG_ALLOW_PLAINTEXT: 'true'
       - name: Render workspace Kubernetes overlay
         run: kubectl kustomize deploy/kubernetes/overlays/workspace > /tmp/aether-workspace.yaml
       - name: Build standalone workspace image
@@ -58,6 +87,13 @@ jobs:
           trap 'docker logs workspace; docker rm -f workspace' EXIT
           curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/readyz
           curl --fail http://127.0.0.1:8080/admin
+      - name: Build PostgreSQL adapter image
+        run: docker build -f runtime/postgres/Dockerfile -t aether-postgres:ci runtime/postgres
+      - name: Verify read-only PostgreSQL adapter container
+        run: |
+          docker run -d --name postgres-adapter --network host --read-only --cap-drop=ALL --security-opt=no-new-privileges -e PGHOST=127.0.0.1 -e PGDATABASE=aether_test -e PGUSER=aether_acme -e PGPASSWORD=aether-test-secret -e AETHER_TENANT_ID=acme -e AETHER_PG_SSL_MODE=disable -e AETHER_PG_ALLOW_PLAINTEXT=true aether-postgres:ci
+          trap 'docker logs postgres-adapter; docker rm -f postgres-adapter' EXIT
+          curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:9002/readyz
   s3:
     runs-on: ubuntu-24.04
     strategy:

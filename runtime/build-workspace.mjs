@@ -78,11 +78,15 @@ try {
   if (tenantId) {
     const s3 = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage: "s3" });
     await writeFile(join(output, "workspace-s3.capnp.bin"), s3.binary);
+    for (const storage of ["local", "s3"]) {
+      const postgres = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage, kvStorage: "postgres" });
+      await writeFile(join(output, storage === "s3" ? "workspace-postgres-s3.capnp.bin" : "workspace-postgres.capnp.bin"), postgres.binary);
+    }
   } else {
-    await rm(join(output, "workspace-s3.capnp.bin"), { force: true });
+    for (const file of ["workspace-s3.capnp.bin", "workspace-postgres.capnp.bin", "workspace-postgres-s3.capnp.bin"]) await rm(join(output, file), { force: true });
   }
   await writeFile(join(output, "manifest.json"), JSON.stringify({
-    schemaVersion: 1, namespace, ...(tenantId ? { tenantId, blobStorageModes: ["local", "s3"] } : { blobStorageModes: ["local"] }),
+    schemaVersion: 1, namespace, ...(tenantId ? { tenantId, blobStorageModes: ["local", "s3"], kvStorageModes: ["local", "postgres"] } : { blobStorageModes: ["local"], kvStorageModes: ["local"] }),
     upstreamCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: upstream, encoding: "utf8" }).trim(),
     workerdVersion: "1.20261006.1", storageWorkersVersion: "5.20260801.1-alpha",
     workers: workers.map(({ config }) => config.name), directories,

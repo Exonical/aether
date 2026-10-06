@@ -1,0 +1,13 @@
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - gateway.yaml
+  - gateway-policy.yaml
+patches:
+  - target:
+      kind: NetworkPolicy
+      name: aether-runtime
+    patch: |-
+      - op: replace
+        path: /spec/ingress
+        value: []

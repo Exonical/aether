@@ -35,9 +35,11 @@ export function validateWorkerConfig(config) {
 }
 
 /** Compile the pinned storage Workers and upstream graph into a native workerd config. */
-export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage = "local" }) {
+export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage = "local", kvStorage = "local" }) {
   if (!/^[a-zA-Z0-9_-]+$/.test(namespace)) throw new Error("Invalid permanent namespace identity");
   if (!["local", "s3"].includes(storage)) throw new Error("Unsupported blob storage mode");
+  if (!["local", "postgres"].includes(kvStorage)) throw new Error("Unsupported KV storage mode");
+  if (kvStorage === "postgres" && !namespace.startsWith("aether-tenant-")) throw new Error("PostgreSQL KV requires a tenant artifact");
   const kvOptions = KV_PLUGIN.options.parse({ kvNamespaces: Object.fromEntries(workers.flatMap(({ config }) =>
     (config.kv_namespaces || []).map(({ binding }) => [binding, `${namespace}-${config.name}-${binding}`]))) });
   const r2Options = R2_PLUGIN.options.parse({ r2Buckets: Object.fromEntries(workers.flatMap(({ config }) =>
@@ -58,6 +60,15 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       // Miniflare's Node loopback is optional logging/error presentation, not storage.
       // Native workerd logs errors itself; no Node debug/control service is shipped.
       service.worker.bindings = (service.worker.bindings || []).filter(binding => binding.name !== "MINIFLARE_LOOPBACK");
+      if (kvStorage === "postgres" && service.name === "kv:ns") {
+        const module = service.worker.modules.find(module => module.name === "namespace.worker.js");
+        const source = "new KeyValueStorage(this)";
+        if (!module?.esModule || module.esModule.split(source).length !== 2) throw new Error("Pinned KV Worker storage contract changed");
+        module.esModule = 'import { PostgresKeyValueStorage } from "./postgres-kv-storage.js";\n'
+          + module.esModule.replace(source, "new PostgresKeyValueStorage(this)");
+        service.worker.modules.push({ name: "postgres-kv-storage.js", esModule: await readFile(join(root, "src/postgres-kv-storage.js"), "utf8") });
+        service.worker.bindings.push({ name: "POSTGRES", service: { name: "aether:postgres-endpoint" } });
+      }
       if (storage === "s3" && service.name === "r2:bucket") {
         const blobs = service.worker.bindings.find(binding => binding.name === "MINIFLARE_BLOBS");
         if (!blobs?.service) throw new Error("Pinned R2 worker no longer exposes BlobStore");
@@ -126,6 +137,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       bindings: [{ name: "ADAPTER", service: { name: "aether:s3-endpoint" } }],
     } },
   );
+  if (kvStorage === "postgres") services.push({ name: "aether:postgres-endpoint", external: { address: "127.0.0.1:9002", http: {} } });
   const sharedRoot = join(dirname(require.resolve("miniflare")), "workers/shared");
   const config = {
     services,
