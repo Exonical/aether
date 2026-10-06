@@ -3,10 +3,22 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "engines": { "node": ">=24.19.0" },
+  "engines": {
+    "node": ">=24.19.0"
+  },
   "scripts": {
     "start": "node run.mjs",
-    "test": "node --test test/*.test.mjs"
+    "test": "node --test test/*.test.mjs",
+    "workspace:build": "node build-workspace.mjs",
+    "workspace:start": "node run-workspace.mjs",
+    "workspace:test": "node --test integration/*.test.mjs"
   },
-  "dependencies": { "workerd": "1.20261006.1" }
+  "dependencies": {
+    "workerd": "1.20261006.1"
+  },
+  "devDependencies": {
+    "capnweb": "0.11.1",
+    "jsonc-parser": "3.3.1",
+    "miniflare": "5.20260801.1-alpha"
+  }
 }

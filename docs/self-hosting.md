@@ -2,21 +2,22 @@
 
 ## What runs today
 
-There are three separate execution paths. Their configuration is deliberately explicit:
+There are four separate execution paths. Their configuration is deliberately explicit:
 
 | Mode | Command | State | What it provides |
 | --- | --- | --- | --- |
+| Native workspace | `npm run workspace:start --prefix runtime` | Local KV/R2 protocol Workers and SQLite DOs | UI, password accounts, workspace management, Context/Scheduler provisioning |
 | Upstream local development | `pnpm run-local` | Upstream Wrangler development storage | Full Cloudflare OS workspace for evaluation |
 | Standalone foundation | `npm start --prefix runtime` | SQLite files under `AETHER_STATE_DIR` | Real workerd service bindings, native WorkerLoader, and persistent DO probe |
 | Cloudflare hosted | `pnpm check` / `pnpm deploy` | Cloudflare-managed services | Original starter deployment |
 
 The local launcher passes arguments to the pinned upstream `scripts/run-local.ts`, including `--port 9000`. It uses upstream development authentication; create an account called `admin` for administrator access. It does not consume `deployment.jsonc` or translate Cloudflare Access into OIDC. Preserve upstream development storage if you need evaluation data, but do not treat it as the eventual production storage format.
 
-The standalone foundation intentionally has no model keys, S3 credentials, sign-in implementation, or dynamic user-code endpoint. Its probes verify primitives we need for the port. They are not an agent API. The readiness probe performs a read through a service binding into the SQLite-backed Durable Object; liveness checks only the gateway so a storage outage does not trigger continuous liveness restarts.
+The diagnostic foundation intentionally has no model keys, S3 credentials, sign-in implementation, or dynamic user-code endpoint. The separate [native workspace](standalone-workspace.md) hosts the upstream graph and password authentication, using local storage protocol Workers; it still has no external models, browser rendering, S3 or OIDC integration. Its probes verify primitives we need for the port. They are not an agent API. The readiness probe performs a read through a service binding into the SQLite-backed Durable Object; liveness checks only the gateway so a storage outage does not trigger continuous liveness restarts.
 
 ## Target architecture
 
-The following is the planned architecture, not the currently deployed Worker graph:
+The core Worker graph and local state now run. External identity, database/blob adapters, browser rendering and model access below remain planned:
 
 ```mermaid
 flowchart TD
@@ -45,7 +46,7 @@ The starter's existing submodule remains at `6478a1448a11524e2f7c2575ad66fab0bc4
 | Router / frontend assets | Public routing and static UI | Build frontend assets and provide matching asset-service semantics |
 | Workshop | Agent, Gadget, account and admin backend | Bundle validated code and configure Workers modules and compatibility flags |
 | `LOADER` | Dynamic Gadget Workers | Native `workerLoader` binding; tested in the foundation |
-| Workshop DOs | `UserDurableObject`, `OverseerDurableObject`, `AdminSettings`, `PendingLogin`, `UserDirectoryDurableObject` | Stable namespace identities and SQLite DO storage |
+| Workshop DOs | `UserDurableObject`, `OverseerDurableObject`, `AdminSettings`, `PendingLogin` | Stable namespace identities and SQLite DO storage |
 | Context DOs | `ContextCollectionDurableObject`, `UserLibraryDurableObject`, `LibraryRegistryDurableObject`, `ContextGatekeeper` | Register exports and stable namespaces in the same graph |
 | Scheduler DOs | `ScheduleDriver`, `SchedulerGatekeeper` | Persistent state, alarm delivery and restart tests |
 | `BLUEPRINTS`, `AVATARS`, `CONTEXT_COLLECTIONS` | KV namespaces | Implement the used KV API semantics over metadata storage |
@@ -62,7 +63,9 @@ Native Gadget definitions should retain upstream's `globalOutbound: null`, empty
 ## Milestones and acceptance criteria
 
 1. **Runtime foundation (this change).** Launch workerd without Wrangler or Cloudflare credentials. Verify service routing, fixed dynamic code loading with no ambient network, concurrent SQLite writes and restart persistence. Build a non-root image and render both Kubernetes overlays.
-2. **Core Worker graph.** Build the pinned frontend and validated Worker modules. Bring up Router, Workshop, Context and Scheduler in one workerd configuration. Introduce complete namespace bindings, modules, assets and compatibility settings. Fail config generation on unsupported required bindings; never silently omit them.
+2. **Core Worker graph (implemented for local evaluation).** Build the pinned frontend and validated Worker modules. Bring up Router, Workshop, Context and Scheduler in one workerd configuration. Introduce complete namespace bindings, modules, assets and compatibility settings. Fail config generation on unsupported required bindings; never silently omit them.
+The graph is bundled from the pinned upstream configs; build-time Miniflare KV/R2 Workers supply persistent local protocol services. HTTP/WebSocket authentication, account isolation, workspace/admin state, Gatekeeper provisioning, KV avatars and bundled R2 Blueprints pass native restart tests. Scheduled callback delivery and model-driven Gadget creation still need acceptance tests.
+
 3. **Self-hosted persistence.** Implement metadata and blob adapters. Use real PostgreSQL and S3-compatible services for contract tests, including binary and streaming round trips, list pagination, expiration and failure behavior. Verify create/reopen/delete of a Blueprint, avatar and Context collection from the UI after restart.
 4. **Identity and models.** Add an Authentik auth Gatekeeper or verified OIDC adapter and an internal model gateway. Verify issuer, audience, signature, expiry, session revocation and subject mapping. Derive identity from verified tokens or an authenticated internal channel; do not trust arbitrary forwarded identity headers. Test account isolation and approved resource grants.
 5. **Browser and integrations.** Implement browser rendering, then port a custom Gatekeeper followed by GitHub. Verify Gadget creation, human approval and denial, screenshot/PDF export, scheduled work after restart, and cross-account isolation.

@@ -2,9 +2,27 @@
 
 A self-hosted AI workspace and application runtime, built on [Cloudflare OS](https://github.com/cloudflare/cloudflare-os) and [workerd](https://github.com/cloudflare/workerd), targeting Kubernetes.
 
-**Status: bootstrap.** The full Cloudflare OS UI runs in upstream local-development mode. The standalone runtime verifies the execution and persistence foundation; it does not yet host the Cloudflare OS UI, agents, or Gatekeepers. The existing Cloudflare-hosted deployment remains available.
+**Status: standalone workspace evaluation.** Router, Workshop, Context, Scheduler, and the frontend now run directly in workerd with persistent local KV, R2, and Durable Object state. Password accounts, workspace management, and administrator settings are tested. External model access, browser rendering, Authentik, and PostgreSQL/S3 storage are not integrated yet. The original diagnostic runtime and Cloudflare-hosted deployment remain available.
 
-## Try the full workspace locally
+## Run the standalone workspace
+
+Requires Git, Node.js **24.19+**, pnpm **11.17+**, and npm. Build dependencies are installed once; the running server uses only workerd and local disk.
+
+```sh
+git clone --recurse-submodules https://github.com/Exonical/aether.git
+cd aether
+npm ci --prefix runtime
+pnpm --dir cloudflare-os install --frozen-lockfile
+npm run workspace:build --prefix runtime
+npm run workspace:test --prefix runtime
+npm run workspace:start --prefix runtime
+```
+
+Open **http://localhost:8080** and create the `admin` account while access is limited to your machine. Local administrator usernames default to `["admin"]`; set `AETHER_ADMINS` to a JSON array to choose your own. Local data defaults to `runtime/.workspace-state`, separate from the diagnostic runtime and Wrangler development data.
+
+The build invokes the compilers directly and uses Wrangler only for offline dry-run bundling, with telemetry disabled. Miniflare's pinned KV/R2 Workers are included at build time; no Miniflare server or Wrangler process runs at startup. **Inference and browser export remain unavailable** because outbound networking is denied. [Standalone workspace guide](docs/standalone-workspace.md) explains the artifact, storage, and limits.
+
+## Upstream development mode
 
 Requires Git, Node.js **24.19+**, and pnpm **11.17+**. No Cloudflare account is required for default local mode.
 
@@ -53,17 +71,17 @@ kubectl -n aether rollout status statefulset/aether
 kubectl -n aether port-forward service/aether 8080:8080
 ```
 
-This deploys the runtime foundation, not the full workspace.
+This deploys the diagnostic runtime. For the workspace image and Kata overlay, use the [workspace deployment instructions](docs/standalone-workspace.md#kubernetes).
 
 ## Next implementation milestone
 
-Port the pinned upstream Worker graph into standalone workerd: Router, Workshop, Context, and Scheduler in one process, retaining Worker RPC and dynamic loading. Then implement storage adapters, model access, browser rendering, and Authentik sign-in. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
+Add explicitly scoped model-gateway access and Authentik sign-in, then implement PostgreSQL/S3 storage adapters and browser rendering. The current KV/R2 implementation is the pinned local storage protocol Workers, not external database or object storage. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
 
 | Path | Purpose |
 | --- | --- |
 | `cloudflare-os/` | Upstream submodule pinned at `6478a1448a11524e2f7c2575ad66fab0bc47c433` |
-| `runtime/` | Standalone workerd config, Workers, launcher, image, and integration test |
-| `deploy/kubernetes/` | Kustomize base and optional Kata overlay |
+| `runtime/` | Diagnostic runtime and native workspace build, config, images, and integration tests |
+| `deploy/kubernetes/` | Diagnostic base, Kata overlay, and VM-isolated workspace overlay |
 | `scripts/run-local.mjs` | Launcher for the pinned upstream development workspace |
 | `packages/` | Existing custom Gatekeeper and error reporter |
 | `deployment.jsonc` | Existing Cloudflare-hosted configuration |
@@ -72,7 +90,7 @@ For deployment to Cloudflare's managed platform, use the preserved [hosted deplo
 
 ## Validation
 
-`npm test --prefix runtime` launches real workerd processes and checks service binding routing, native WorkerLoader operation, denied Gadget-style ambient networking, 24 concurrent SQLite updates, method handling, and state after restart. CI also renders both Kubernetes overlays, builds the image, and checks startup with a read-only filesystem. A cluster rollout and a complete self-hosted Cloudflare OS session remain separate acceptance tests.
+`npm test --prefix runtime` launches real workerd processes and checks service binding routing, native WorkerLoader operation, denied Gadget-style ambient networking, 24 concurrent SQLite updates, method handling, and state after restart. CI also renders both Kubernetes overlays, builds the image, and checks startup with a read-only filesystem. `npm run workspace:test --prefix runtime` verifies real upstream password authentication over HTTP and WebSocket, account isolation, Context/Scheduler provisioning, asset serving, avatars through KV, bundled Blueprints through R2, and workspace/admin persistence after restart. Workspace CI also builds and starts the native image. A cluster rollout, scheduled callback delivery, and model-driven Gadget creation remain untested.
 
 ## License
 
