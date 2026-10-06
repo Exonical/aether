@@ -35,8 +35,9 @@ export function validateWorkerConfig(config) {
 }
 
 /** Compile the pinned storage Workers and upstream graph into a native workerd config. */
-export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch }) {
+export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage = "local" }) {
   if (!/^[a-zA-Z0-9_-]+$/.test(namespace)) throw new Error("Invalid permanent namespace identity");
+  if (!["local", "s3"].includes(storage)) throw new Error("Unsupported blob storage mode");
   const kvOptions = KV_PLUGIN.options.parse({ kvNamespaces: Object.fromEntries(workers.flatMap(({ config }) =>
     (config.kv_namespaces || []).map(({ binding }) => [binding, `${namespace}-${config.name}-${binding}`]))) });
   const r2Options = R2_PLUGIN.options.parse({ r2Buckets: Object.fromEntries(workers.flatMap(({ config }) =>
@@ -57,6 +58,11 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       // Miniflare's Node loopback is optional logging/error presentation, not storage.
       // Native workerd logs errors itself; no Node debug/control service is shipped.
       service.worker.bindings = (service.worker.bindings || []).filter(binding => binding.name !== "MINIFLARE_LOOPBACK");
+      if (storage === "s3" && service.name === "r2:bucket") {
+        const blobs = service.worker.bindings.find(binding => binding.name === "MINIFLARE_BLOBS");
+        if (!blobs?.service) throw new Error("Pinned R2 worker no longer exposes BlobStore");
+        blobs.service = { name: "aether:s3-blobs" };
+      }
     }
   }
   const services = workers.map(({ config, modules }) => {
@@ -111,6 +117,14 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       bindings: [{ name: "ROUTER", service: { name: "router" } }, kvBindings.find(binding => binding.name === "BLUEPRINTS")],
     } },
     { name: "internet", network: { allow: [] } },
+  );
+  if (storage === "s3") services.push(
+    { name: "aether:s3-endpoint", external: { address: "127.0.0.1:9001", http: {} } },
+    { name: "aether:s3-blobs", worker: {
+      compatibilityDate: "2026-09-04",
+      modules: [{ name: "s3-blobs.js", esModule: await readFile(join(root, "src/s3-blobs.js"), "utf8") }],
+      bindings: [{ name: "ADAPTER", service: { name: "aether:s3-endpoint" } }],
+    } },
   );
   const sharedRoot = join(dirname(require.resolve("miniflare")), "workers/shared");
   const config = {

@@ -1,0 +1,48 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: aether
+spec:
+  template:
+    spec:
+      containers:
+        - name: workerd
+          args:
+            - serve
+            - /opt/aether/workspace-s3.capnp.bin
+            - --binary
+            - --experimental
+            - --socket-addr=http=0.0.0.0:8080
+            - --directory-path=aether:assets-disk=/opt/aether/assets
+            - --directory-path=aether:do-storage=/var/lib/aether/do
+            - --directory-path=kv:storage=/var/lib/aether/kv
+            - --directory-path=r2:storage=/var/lib/aether/r2
+        - name: s3-adapter
+          image: registry.example.com/aether/s3-adapter:0.1.0
+          env:
+            - name: AETHER_TENANT_ID
+              value: acme
+          # Existing user-provided Secret; compatible with COSI v1alpha2 S3 keys.
+          envFrom:
+            - secretRef:
+                name: aether-s3
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "128Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"
+          readinessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9001/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 10

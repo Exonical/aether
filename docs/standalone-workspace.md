@@ -39,7 +39,7 @@ Build dependencies must already be installed. The build pipeline is not an offli
 | `kv/` | KV namespace SQLite metadata and binary values, including avatars and public Context metadata |
 | `r2/` | R2 bucket SQLite metadata and Blueprint blob files |
 
-This storage is supplied by Miniflare **5.20260801.1-alpha**'s pinned protocol Workers, compiled into the config. The Miniflare Node server, Node proxy bindings, debug/control endpoints, and optional Node loopback service are not shipped. The running process is native workerd **1.20261006.1**. These local protocol Workers are evaluation infrastructure; external PostgreSQL and S3 adapters are still planned.
+This storage is supplied by Miniflare **5.20260801.1-alpha**'s pinned protocol Workers, compiled into the config. The Miniflare Node server, Node proxy bindings, debug/control endpoints, and optional Node loopback service are not shipped. The running process is native workerd **1.20261006.1**. These local protocol Workers are evaluation infrastructure. The optional [S3 adapter](s3-storage.md) moves R2 blob contents to a user-provided endpoint while keeping metadata local; PostgreSQL remains planned.
 
 The binary config embeds code, not build-host absolute paths or credentials. Disk paths are supplied at launch. Keep the artifact, permanent namespace identities and all three state directories together. Stop workerd before taking an initial file backup. This is a fresh state layout; it does not import the diagnostic counter's database or Wrangler development data.
 
@@ -88,4 +88,6 @@ The container includes only native workerd and the generated artifact; Node.js, 
 
 ## Next work
 
-Implement a narrowly scoped internal model-gateway binding and its capability grants, then Authentik sign-in. Preserve account/approval isolation when adding these services. PostgreSQL/S3 storage adapters, browser rendering, scheduler recovery tests, and operational recovery follow; adding replicas requires a separate distributed DO ownership design.
+Implement a narrowly scoped internal model-gateway binding and its capability grants, then Authentik sign-in. Preserve account/approval isolation when adding these services. PostgreSQL metadata, browser rendering, scheduler recovery tests, and operational recovery follow; adding replicas requires a separate distributed DO ownership design.
+
+For tenant-specific artifacts, user-provided S3 storage, and optional COSI credentials, see [S3 storage](s3-storage.md). For external HTTPS routing using Cilium, see [Gateway API](gateway-api.md).

@@ -12,6 +12,8 @@ import { createWorkspaceConfig, validateWorkerConfig } from "./workspace-config.
 const runtime = dirname(fileURLToPath(import.meta.url));
 const upstream = resolve(runtime, "../cloudflare-os");
 const output = resolve(process.env.AETHER_BUILD_DIR || join(runtime, "dist/workspace"));
+const tenantId = process.env.AETHER_TENANT_ID;
+if (tenantId && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenantId)) throw new Error("Invalid AETHER_TENANT_ID");
 const packageNames = ["router", "workshop-backend", "gatekeeper-context", "gatekeeper-scheduler"];
 const configs = [];
 for (const name of packageNames) {
@@ -66,14 +68,21 @@ try {
     size: asset.size, sha256: createHash("sha256").update(blobs.get(asset.hash).bytes).digest("hex"),
     contentType: types[extname(path)] || "application/octet-stream",
   }]));
-  const namespace = "aether-workspace-v1";
+  const namespace = tenantId ? `aether-tenant-${tenantId}` : "aether-workspace-v1";
   const { binary, directories, config } = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch });
   await mkdir(output, { recursive: true });
   await rm(join(output, "assets"), { recursive: true, force: true });
   await cp(frontend, join(output, "assets"), { recursive: true });
   await writeFile(join(output, "workspace.capnp.bin"), binary);
+  // Both modes use the same stable object identities and local metadata directories.
+  if (tenantId) {
+    const s3 = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage: "s3" });
+    await writeFile(join(output, "workspace-s3.capnp.bin"), s3.binary);
+  } else {
+    await rm(join(output, "workspace-s3.capnp.bin"), { force: true });
+  }
   await writeFile(join(output, "manifest.json"), JSON.stringify({
-    schemaVersion: 1, namespace,
+    schemaVersion: 1, namespace, ...(tenantId ? { tenantId, blobStorageModes: ["local", "s3"] } : { blobStorageModes: ["local"] }),
     upstreamCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: upstream, encoding: "utf8" }).trim(),
     workerdVersion: "1.20261006.1", storageWorkersVersion: "5.20260801.1-alpha",
     workers: workers.map(({ config }) => config.name), directories,
