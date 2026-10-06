@@ -28,3 +28,29 @@ jobs:
           trap 'docker logs aether; docker rm -f aether' EXIT
           curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/readyz
           curl --fail -X POST http://127.0.0.1:8080/internal/probes/worker
+  workspace:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - run: npm install --global pnpm@11.17.0
+      - run: npm ci --prefix runtime
+      - run: pnpm --dir cloudflare-os install --frozen-lockfile
+      - run: npm run workspace:build --prefix runtime
+      - run: npm run workspace:test --prefix runtime
+      - name: Render workspace Kubernetes overlay
+        run: kubectl kustomize deploy/kubernetes/overlays/workspace > /tmp/aether-workspace.yaml
+      - name: Build standalone workspace image
+        run: docker build -f runtime/Dockerfile.workspace -t aether-workspace:ci runtime
+      - name: Verify native workspace container
+        run: |
+          docker run -d --name workspace --read-only --cap-drop=ALL --security-opt=no-new-privileges --tmpfs /tmp -p 127.0.0.1:8080:8080 -v aether-workspace-state:/var/lib/aether aether-workspace:ci
+          trap 'docker logs workspace; docker rm -f workspace' EXIT
+          curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/readyz
+          curl --fail http://127.0.0.1:8080/admin

@@ -4,3 +4,5 @@ packages/*/.wrangler/
 packages/*/wrangler.prod.jsonc
 deployment.local.jsonc
 runtime/.state/
+runtime/.workspace-state/
+runtime/dist/
