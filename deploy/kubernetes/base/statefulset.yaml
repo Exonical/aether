@@ -1,0 +1,78 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: aether
+spec:
+  serviceName: aether-headless
+  # DO placement is local. Raising this creates separate, divergent state stores.
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: aether-runtime
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: aether-runtime
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: workerd
+          image: aether-runtime
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "2"
+              memory: "1Gi"
+          startupProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+          volumeMounts:
+            - name: state
+              mountPath: /var/lib/aether
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: "128Mi"
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        # CSI storage with RWOP support prevents concurrent writers across pods.
+        accessModes: [ReadWriteOncePod]
+        resources:
+          requests:
+            storage: "10Gi"

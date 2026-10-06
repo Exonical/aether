@@ -14,7 +14,10 @@
     "lint:fix": "vp lint --fix",
     "lint": "pnpm run lint:check && pnpm run types:scripts && pnpm run build",
     "check": "node scripts/deploy.ts --check",
-    "deploy": "node scripts/deploy.ts"
+    "deploy": "node scripts/deploy.ts",
+    "run-local": "node scripts/run-local.mjs",
+    "runtime:start": "npm --prefix runtime start",
+    "runtime:test": "npm --prefix runtime test"
   },
   "devDependencies": {
     "@cloudflare/vitest-pool-workers": "catalog:",

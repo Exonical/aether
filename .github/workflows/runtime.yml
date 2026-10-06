@@ -1,0 +1,30 @@
+name: Self-hosted runtime
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: runtime/package-lock.json
+      - run: npm ci --prefix runtime
+      - run: npm test --prefix runtime
+      - name: Render Kubernetes manifests
+        run: |
+          kubectl kustomize deploy/kubernetes/base > /tmp/aether.yaml
+          kubectl kustomize deploy/kubernetes/overlays/kata > /tmp/aether-kata.yaml
+      - name: Build runtime image
+        run: docker build -f runtime/Dockerfile -t aether-runtime:ci runtime
+      - name: Verify container startup and read-only filesystem
+        run: |
+          docker run -d --name aether --read-only --cap-drop=ALL --security-opt=no-new-privileges --tmpfs /tmp -p 127.0.0.1:8080:8080 -v aether-state:/var/lib/aether aether-runtime:ci
+          trap 'docker logs aether; docker rm -f aether' EXIT
+          curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/readyz
+          curl --fail -X POST http://127.0.0.1:8080/internal/probes/worker
