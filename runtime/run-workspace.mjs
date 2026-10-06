@@ -9,15 +9,21 @@ const output = resolve(process.env.AETHER_BUILD_DIR || join(root, "dist/workspac
 const manifest = JSON.parse(await readFile(join(output, "manifest.json"), "utf8"));
 if (manifest.schemaVersion !== 1) throw new Error("Unsupported workspace artifact schema");
 const storage = process.env.AETHER_BLOB_STORAGE || "local";
+const kvStorage = process.env.AETHER_KV_STORAGE || "local";
 if (!["local", "s3"].includes(storage)) throw new Error("AETHER_BLOB_STORAGE must be local or s3");
+if (!["local", "postgres"].includes(kvStorage)) throw new Error("AETHER_KV_STORAGE must be local or postgres");
 if (storage === "s3" && (!manifest.tenantId || !manifest.blobStorageModes?.includes("s3"))) throw new Error("S3 requires an artifact built with AETHER_TENANT_ID");
+if (kvStorage === "postgres" && (!manifest.tenantId || !manifest.kvStorageModes?.includes("postgres"))) throw new Error("PostgreSQL KV requires a tenant artifact with PostgreSQL support");
 if (process.env.AETHER_TENANT_ID && process.env.AETHER_TENANT_ID !== manifest.tenantId) throw new Error("Artifact tenant identity mismatch");
 const state = resolve(process.env.AETHER_STATE_DIR || join(root, ".workspace-state"));
 const port = process.env.AETHER_PORT || "8080";
 if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error("Invalid AETHER_PORT");
-const args = ["serve", join(output, storage === "s3" ? "workspace-s3.capnp.bin" : "workspace.capnp.bin"), "--binary", "--experimental", `--socket-addr=http=127.0.0.1:${port}`,
+const file = kvStorage === "postgres" ? (storage === "s3" ? "workspace-postgres-s3.capnp.bin" : "workspace-postgres.capnp.bin")
+  : (storage === "s3" ? "workspace-s3.capnp.bin" : "workspace.capnp.bin");
+const args = ["serve", join(output, file), "--binary", "--experimental", `--socket-addr=http=127.0.0.1:${port}`,
   `--directory-path=aether:assets-disk=${join(output, "assets")}`];
 if (storage === "s3") args.push(`--external-addr=aether:s3-endpoint=127.0.0.1:${process.env.AETHER_S3_PORT || "9001"}`);
+if (kvStorage === "postgres") args.push(`--external-addr=aether:postgres-endpoint=127.0.0.1:${process.env.AETHER_PG_ADAPTER_PORT || "9002"}`);
 for (const { service, subdirectory } of manifest.directories) {
   const path = join(state, subdirectory);
   await mkdir(path, { recursive: true });

@@ -21,6 +21,7 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
   await new Promise(resolve => socket.close(resolve));
   const origin = `http://127.0.0.1:${port}`;
   let child;
+  let postgresAdapter, postgresPort;
   let output = "";
   async function stop() {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
@@ -32,7 +33,9 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
   async function start() {
     output = "";
     child = spawn(process.execPath, [join(root, "run-workspace.mjs")], {
-      env: { ...process.env, AETHER_STATE_DIR: state, AETHER_PORT: String(port), AETHER_ADMINS: '["admin"]' },
+      env: { ...process.env, AETHER_STATE_DIR: state, AETHER_PORT: String(port), AETHER_ADMINS: '["admin"]',
+        ...(postgresPort ? { AETHER_PG_ADAPTER_PORT: String(postgresPort) } : {}),
+      },
       stdio: ["ignore", "pipe", "pipe"],
     });
     child.stdout.on("data", chunk => { output += chunk; });
@@ -51,6 +54,14 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     try { return await callback(api); } finally { api[Symbol.dispose](); }
   }
   try {
+    if (process.env.AETHER_KV_STORAGE === "postgres") {
+      const { createAdapter } = await import("../postgres/server.mjs");
+      const { readConfig } = await import("../postgres/config.mjs");
+      postgresAdapter = await createAdapter(await readConfig());
+      postgresAdapter.listen(0, "127.0.0.1");
+      await once(postgresAdapter, "listening");
+      postgresPort = postgresAdapter.address().port;
+    }
     await start();
     const response = await fetch(origin);
     assert.equal(response.status, 200, output);
@@ -125,6 +136,10 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     throw error;
   } finally {
     await stop();
+    if (postgresAdapter) {
+      postgresAdapter.closeAllConnections();
+      await new Promise(resolve => postgresAdapter.close(resolve));
+    }
     await rm(state, { recursive: true, force: true });
   }
 });
