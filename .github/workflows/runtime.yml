@@ -71,10 +71,16 @@ jobs:
           node-version: '24'
       - run: npm ci --prefix runtime
       - run: npm ci --prefix runtime/s3 --ignore-scripts
-      - name: Start MinIO test backend
+      - uses: actions/setup-go@v5
+        if: matrix.provider == 'minio'
+        with:
+          go-version: '1.24.2'
+          cache: false
+      - name: Build and start pinned MinIO test backend
         if: matrix.provider == 'minio'
         run: |
-          docker run -d --name s3 -p 127.0.0.1:8333:9000 -e MINIO_ROOT_USER=aether-test -e MINIO_ROOT_PASSWORD=aether-test-secret quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z server /data
+          go install github.com/minio/minio@RELEASE.2025-09-07T16-13-09Z
+          MINIO_ROOT_USER=aether-test MINIO_ROOT_PASSWORD=aether-test-secret MINIO_UPDATE=off "$(go env GOPATH)/bin/minio" server /tmp/minio-data --address 127.0.0.1:8333 --console-address 127.0.0.1:8334 > /tmp/minio.log 2>&1 &
       - name: Start SeaweedFS test backend
         if: matrix.provider == 'seaweedfs'
         run: |
@@ -109,3 +115,4 @@ jobs:
         run: |
           docker logs s3 || true
           docker logs adapter || true
+          cat /tmp/minio.log 2>/dev/null || true

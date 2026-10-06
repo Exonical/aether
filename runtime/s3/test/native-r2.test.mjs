@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { createWorkspaceConfig } from "../../workspace-config.mjs";
 import { createAdapter } from "../server.mjs";
 import { readConfig } from "../config.mjs";
-import { S3Client, CreateBucketCommand, ListObjectsV2Command, DeleteObjectsCommand } from "@aws-sdk/client-s3";
+import { S3Client, CreateBucketCommand, ListObjectsV2Command, DeleteObjectsCommand, DeleteBucketCommand } from "@aws-sdk/client-s3";
 
 const require = createRequire(import.meta.url);
 const probe = `export default { async fetch(req, env) {
@@ -155,6 +155,7 @@ test("native R2 stores streaming blobs on user-provided S3 and survives restart"
   } finally {
     const list = await client.send(new ListObjectsV2Command({ Bucket: config.bucket }));
     if (list.Contents?.length) await client.send(new DeleteObjectsCommand({ Bucket: config.bucket, Delete: { Objects: list.Contents.map(({ Key }) => ({ Key })) } }));
+    await client.send(new DeleteBucketCommand({ Bucket: config.bucket }));
     client.destroy();
   }
 });

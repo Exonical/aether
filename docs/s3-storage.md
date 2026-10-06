@@ -81,4 +81,4 @@ The runtime requires a working Kata RuntimeClass and CSI ReadWriteOncePod suppor
 
 `npm test --prefix runtime/s3` checks configuration, COSI formats, path confinement, and native R2 failure behavior without a backend. Setting `AETHER_TEST_S3_ENDPOINT` also runs native workerd through the adapter against a real test endpoint, including a 20 MiB streamed S3 multipart upload, native R2 multipart assembly, range reads, metadata, list/delete, and restart persistence. Test credentials default to `aether-test`/`aether-test-secret`; override with `AETHER_TEST_S3_ACCESS_KEY` and `AETHER_TEST_S3_SECRET_KEY`. This test creates a disposable bucket and requires bucket-administration privileges; never run it with production tenant credentials.
 
-CI runs the same contract against MinIO and SeaweedFS. Ceph RGW, custom-CA TLS, and a real COSI/Kubernetes rollout still require environment-specific validation.
+CI runs the same contract against MinIO and SeaweedFS. Custom-CA TLS is tested against a signed HTTPS fixture. Ceph RGW and a real COSI/Kubernetes rollout still require environment-specific validation.
