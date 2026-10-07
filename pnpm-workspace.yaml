@@ -38,6 +38,9 @@ overrides:
   # Arrives as an optional vite/vitest peer resolved to `latest`; pinned to the same release the
   # submodule pins so the two installs agree.
   '@types/node': 26.1.0
+  # Align Vitest's optional browser peer with this workspace's locked patch release.
+  '@vitest/browser-preview': 4.1.11
+  vitest: 4.1.11
 
 allowBuilds:
   '@google/genai': true

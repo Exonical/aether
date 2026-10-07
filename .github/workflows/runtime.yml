@@ -34,6 +34,22 @@ jobs:
           trap 'docker logs aether; docker rm -f aether' EXIT
           curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:8080/readyz
           curl --fail -X POST http://127.0.0.1:8080/internal/probes/worker
+  toolchain:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: true
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - run: npm install --global pnpm@11.28.5
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm peers check
+      - run: node --test 'scripts/**/*.test.ts'
+      - run: pnpm run types:scripts
+      - run: pnpm --filter custom-gatekeeper test:run
+      - run: pnpm --filter error-reporter test:run
   workspace:
     runs-on: ubuntu-24.04
     services:
@@ -51,19 +67,35 @@ jobs:
       - uses: actions/checkout@v4
         with:
           submodules: true
+          fetch-depth: 0
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
           cache: npm
           cache-dependency-path: runtime/package-lock.json
-      - run: npm install --global pnpm@11.17.0
+      - run: npm install --global pnpm@11.28.5
       - run: npm ci --prefix runtime
       - run: npm ci --prefix runtime/postgres --ignore-scripts
       - name: Verify native KV contracts and PostgreSQL role isolation
         run: npm test --prefix runtime/postgres
         env:
           AETHER_TEST_PGHOST: 127.0.0.1
-      - run: pnpm --dir cloudflare-os install --frozen-lockfile
+      - run: pnpm --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
+      - name: Build the previous main artifact for storage upgrade verification
+        run: |
+          mkdir -p /tmp/aether-baseline
+          baseline_sha="$BASE_SHA"
+          if ! git cat-file -e "$baseline_sha^{commit}" 2>/dev/null; then baseline_sha=origin/main; fi
+          git archive "$baseline_sha" runtime | tar -x -C /tmp/aether-baseline
+          ln -s "$GITHUB_WORKSPACE/cloudflare-os" /tmp/aether-baseline/cloudflare-os
+          npm ci --prefix /tmp/aether-baseline/runtime
+          node /tmp/aether-baseline/runtime/build-workspace.mjs
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          AETHER_BUILD_DIR: /tmp/aether-previous-workspace
+          AETHER_TENANT_ID: acme
+          AETHER_MODEL_GATEWAY: 'true'
+          pnpm_config_pm_on_fail: ignore
       - run: npm run workspace:build --prefix runtime
         env:
           AETHER_TENANT_ID: acme
@@ -72,7 +104,10 @@ jobs:
         run: npm test --prefix runtime/models
         env:
           AETHER_TEST_MODEL_SDK: 'true'
-      - run: npm run workspace:test --prefix runtime
+      - name: Verify workspace state across the dependency upgrade
+        run: npm run workspace:test --prefix runtime
+        env:
+          AETHER_TEST_PREVIOUS_BUILD_DIR: /tmp/aether-previous-workspace
       - name: Verify full workspace with PostgreSQL KV
         run: npm run workspace:test --prefix runtime
         env:

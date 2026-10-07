@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { KV_PLUGIN, R2_PLUGIN, serializeConfig } from "miniflare";
+import { KV_PLUGIN, R2_PLUGIN, WorkerOptionsSchema, InstanceOptionsSchema, serializeConfig } from "miniflare";
 
 const require = createRequire(import.meta.url);
 const root = dirname(fileURLToPath(import.meta.url));
@@ -41,15 +41,18 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
   if (!["local", "postgres"].includes(kvStorage)) throw new Error("Unsupported KV storage mode");
   if (kvStorage === "postgres" && !namespace.startsWith("aether-tenant-")) throw new Error("PostgreSQL KV requires a tenant artifact");
   if (modelGateway && !namespace.startsWith("aether-tenant-")) throw new Error("Model gateway requires a tenant artifact");
-  const kvOptions = KV_PLUGIN.options.parse({ kvNamespaces: Object.fromEntries(workers.flatMap(({ config }) =>
-    (config.kv_namespaces || []).map(({ binding }) => [binding, `${namespace}-${config.name}-${binding}`]))) });
-  const r2Options = R2_PLUGIN.options.parse({ r2Buckets: Object.fromEntries(workers.flatMap(({ config }) =>
-    (config.r2_buckets || []).map(({ binding }) => [binding, `${namespace}-${config.name}-${binding}`]))) });
-  const kvBindings = await KV_PLUGIN.getBindings(kvOptions);
-  const r2Bindings = await R2_PLUGIN.getBindings(r2Options);
+  const kvOptions = WorkerOptionsSchema.parse({ config: { name: "aether-kv", compatibilityDate: "2026-09-04",
+    env: Object.fromEntries(workers.flatMap(({ config }) => (config.kv_namespaces || []).map(({ binding }) =>
+      [binding, { type: "kv", id: `${namespace}-${config.name}-${binding}` }]))) } });
+  const r2Options = WorkerOptionsSchema.parse({ config: { name: "aether-r2", compatibilityDate: "2026-09-04",
+    env: Object.fromEntries(workers.flatMap(({ config }) => (config.r2_buckets || []).map(({ binding }) =>
+      [binding, { type: "r2", name: `${namespace}-${config.name}-${binding}` }]))) } });
+  const sharedOptions = InstanceOptionsSchema.parse({ telemetry: { enabled: false } });
+  const kvBindings = await KV_PLUGIN.getBindings(kvOptions, sharedOptions);
+  const r2Bindings = await R2_PLUGIN.getBindings(r2Options, sharedOptions);
   const storageServices = [
-    ...await KV_PLUGIN.getServices({ options: kvOptions, tmpPath: scratch }),
-    ...await R2_PLUGIN.getServices({ options: r2Options, tmpPath: scratch }),
+    ...await KV_PLUGIN.getServices({ options: kvOptions, tmpPath: scratch, sharedOptions }),
+    ...await R2_PLUGIN.getServices({ options: r2Options, tmpPath: scratch, sharedOptions }),
   ];
   const directories = [{ service: "aether:do-storage", subdirectory: "do" }];
   for (const service of storageServices) {

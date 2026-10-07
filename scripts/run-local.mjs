@@ -13,6 +13,8 @@ if (!existsSync(entrypoint)) {
 const child = spawn(process.execPath, [entrypoint, ...process.argv.slice(2)], {
   cwd: upstream,
   stdio: "inherit",
+  // Aether validates its newer pnpm against the unchanged upstream workspace.
+  env: { ...process.env, pnpm_config_pm_on_fail: "ignore" },
   // Upstream owns signal forwarding to its server process tree.
   detached: process.platform !== "win32",
 });
