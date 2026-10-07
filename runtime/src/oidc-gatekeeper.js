@@ -1,3 +1,4 @@
+export {SessionRegistry, OidcSessions} from './oidc-sessions.js';
 import { DurableObject, WorkerEntrypoint, RpcTarget } from 'cloudflare:workers';
 import { browserCookie, randomNonce } from './oidc-browser.js';
 
@@ -7,8 +8,9 @@ const digest = async value => Array.from(new Uint8Array(await crypto.subtle.dige
   .map(v => v.toString(16).padStart(2, '0')).join('');
 const description = env => ({displayName:env.DISPLAY_NAME, url:env.PUBLIC_URL, providesAuth:true});
 class VerifiedAccount extends RpcTarget {
-  #email;
-  constructor(email) {super(); this.#email = email;}
+  #email; #identity;
+  constructor(email,identity=null) {super(); this.#email = email; this.#identity=identity;}
+  getOidcIdentity() {return this.#identity;}
   getAuthenticatedEmail() {return this.#email;}
 }
 class BrowserVendor extends RpcTarget {
@@ -72,7 +74,7 @@ export class OidcLogin extends DurableObject {
       if (stage === 'start') return result.url;
       const identity = this.ctx.exports.OidcIdentity.get(this.ctx.exports.OidcIdentity.idFromName(result.email));
       await identity.bind(result.issuer, result.subject);
-      await callback.complete(new VerifiedAccount(result.email));
+      await callback.complete(new VerifiedAccount(result.email, result));
       return null;
     } catch {
       await callback.complete(new VerifiedAccount(null));
@@ -92,9 +94,25 @@ const popup = (ok, status) => new Response(ok
     'content-security-policy':"default-src 'none'; script-src 'unsafe-inline'; frame-ancestors 'none'"}});
 export default {
   async fetch(request, env, ctx) {
+    const isLogout=new URL(request.url).pathname === '/gatekeeper/oidc/backchannel-logout';
     try {
       const url = new URL(request.url);
-      if (request.method !== 'GET' || !['/gatekeeper/oidc/start', '/gatekeeper/oidc/oauth'].includes(url.pathname)) return popup(false, 404);
+      if (url.pathname === '/gatekeeper/oidc/backchannel-logout') {
+        if(request.method!=='POST' || !/^application\/x-www-form-urlencoded(?:\s*;|$)/i.test(request.headers.get('content-type') || ''))
+          return new Response(null,{status:400});
+        const reader=request.body?.getReader();if(!reader)return new Response(null,{status:400});
+        let size=0;const chunks=[];
+        while(true){const {done,value}=await reader.read();if(done)break;size+=value.length;if(size>16384){await reader.cancel();return new Response(null,{status:413});}chunks.push(value);}
+        const bytes=new Uint8Array(size);let offset=0;for(const chunk of chunks){bytes.set(chunk,offset);offset+=chunk.length;}
+        const params=new URLSearchParams(new TextDecoder().decode(bytes));
+        if(params.getAll('logout_token').length!==1)return new Response(null,{status:400});
+        const verified=await env.ADAPTER.fetch('http://oidc/verify-logout',{method:'POST',
+          headers:{'content-type':'application/json','x-aether-oidc-tenant':env.TENANT},body:JSON.stringify({logoutToken:params.get('logout_token')})});
+        if(!verified.ok)return new Response(null,{status:verified.status===429 || verified.status>=500 ? 503:400});
+        await ctx.exports.OidcSessions.getByName('sessions').revoke(await verified.json());
+        return new Response(null,{status:200,headers:{'cache-control':'no-store'}});
+      }
+      if (request.method !== 'GET'  || !['/gatekeeper/oidc/start', '/gatekeeper/oidc/oauth'].includes(url.pathname)) return popup(false, 404);
       const state = url.searchParams.get('state');
       const browser = browserCookie(request, env.PUBLIC_URL);
       if (!browser || !STATE.test(state || '') || url.searchParams.getAll('state').length !== 1) return popup(false, 400);
@@ -104,6 +122,6 @@ export default {
       callback.search = url.search;
       const redirect = await login.handle(url.pathname.endsWith('/start') ? 'start' : 'complete', await digest(browser), secret, callback.href);
       return redirect ? new Response(null, {status:302, headers:{location:redirect, 'cache-control':'no-store', 'referrer-policy':'no-referrer'}}) : popup(true, 200);
-    } catch { return popup(false, 400); }
+    } catch { return isLogout ? new Response(null,{status:503}):popup(false,400); }
   }
 };

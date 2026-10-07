@@ -56,7 +56,7 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
   t.after(()=>stop());
   async function start() {
     child=spawn(process.execPath,[join(root,'run-workspace.mjs')], {env:{...process.env,
-      AETHER_TENANT_ID:'acme',AETHER_STATE_DIR:stateDir,AETHER_PORT:'8080',AETHER_PUBLIC_URL:origin,AETHER_OIDC_PORT:String(port),
+      AETHER_BIND_ADDRESS:keycloak ? '0.0.0.0':'127.0.0.1',AETHER_TENANT_ID:'acme',AETHER_STATE_DIR:stateDir,AETHER_PORT:'8080',AETHER_PUBLIC_URL:origin,AETHER_OIDC_PORT:String(port),
       AETHER_OIDC_ALLOW_HTTP:'true',AETHER_ADMINS:'["admin@example.com"]'},stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',v=>logs+=v);child.stderr.on('data',v=>logs+=v);
     for(let i=0;i<200;i++) {
@@ -71,7 +71,7 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     const cookie=response.headers.getSetCookie()[0]?.split(';')[0];assert.ok(cookie,'Missing browser login cookie');
     const socket=new WebSocket(origin.replace('http:','ws:')+'/api',{headers:{cookie,origin}});
     const api=newWebSocketRpcSession(socket);sockets.push([api,socket]);
-    return {api,cookie};
+    return {api,cookie,socket};
   }
   async function login(browser, username='admin') {
     const attempt=await browser.api.startGatekeeperLogin('oidc');
@@ -125,5 +125,69 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
       issuer.setScenario({claims:{sub:'hijacker'}});
       assert.equal((await login(restored)).response.status,400,'Identity binding must survive restart');
     }
+    if(keycloak) {
+      const live=await browser();const real=await login(live);const active=await live.api.authenticate(real.outcome.token);
+      const adminCapability=await active.getAdminApi();const gadgetCapability=await active.openGadget(gadget.id);
+      const managementOrigin=new URL(keycloak).origin;
+      const response=await fetch(managementOrigin+'/realms/master/protocol/openid-connect/token',{method:'POST',
+        headers:{'content-type':'application/x-www-form-urlencoded'},body:new URLSearchParams({client_id:'admin-cli',grant_type:'password',
+          username:'aether-admin',password:'fixture-admin-secret'})});
+      assert.equal(response.status,200,'Synthetic Keycloak management login failed');
+      const {access_token}=await response.json();const headers={authorization:'Bearer '+access_token};
+      const users=await (await fetch(managementOrigin+'/admin/realms/aether/users?username=admin&exact=true',{headers})).json();
+      assert.equal(users.length,1);
+      const idleClosed=once(live.socket,'close');
+      const revoked=await fetch(managementOrigin+'/admin/realms/aether/users/'+users[0].id+'/logout',{method:'POST',headers});
+      assert.equal(revoked.status,204,'Keycloak admin logout failed');
+      await Promise.race([idleClosed,delay(2000).then(()=>{throw new Error('Keycloak logout did not close the idle session');})]);
+      // Keycloak sends the real signed token to the registered native public endpoint.
+      await assert.rejects(async()=>await active.whoami());
+      await assert.rejects(async()=>await adminCapability.getSettings());
+      await assert.rejects(async()=>await gadgetCapability.getMetadata());
+      const retry=await browser();await assert.rejects(async()=>await retry.api.authenticate(real.outcome.token));
+      assert.equal((await retry.api.authenticate(signedOther.outcome.token).whoami()).id,'other@example.com','Another subject remains signed in');
+      await stop();await start();const restarted=await browser();
+      await assert.rejects(async()=>await restarted.api.authenticate(real.outcome.token));
+    }
+    if(issuer) {
+      issuer.setScenario({});
+      const live=await browser();const sibling=await browser();
+      issuer.setScenario({claims:{sid:'logout-session'}});
+      const logged=await login(live);const active=await live.api.authenticate(logged.outcome.token);
+      const adminCapability=await active.getAdminApi();const gadgetCapability=await active.openGadget(gadget.id);
+      issuer.setScenario({claims:{sid:'other-session'}});
+      const siblingLogin=await login(sibling);const siblingUser=await sibling.api.authenticate(siblingLogin.outcome.token);
+      const logoutUrl=origin+'/gatekeeper/oidc/backchannel-logout';
+      const sendLogout=async jwt=>fetch(logoutUrl,{method:'POST',headers:{'content-type':'application/x-www-form-urlencoded',host:'idp-callback.internal:8080'},body:new URLSearchParams({logout_token:jwt})});
+      assert.equal((await sendLogout(await issuer.signLogout({sid:'logout-session'},true))).status,400);
+      assert.equal((await active.whoami()).id,'admin@example.com','Invalid logout must not revoke');
+      const idleClosed=once(live.socket,'close');
+      const logout=await issuer.signLogout({sid:'logout-session',sub:undefined});
+      assert.equal((await sendLogout(logout)).status,200);
+      await Promise.race([idleClosed,delay(2000).then(()=>{throw new Error('Idle revoked connection did not close');})]);
+      await assert.rejects(async()=>await active.whoami());
+      await assert.rejects(async()=>await adminCapability.getSettings());
+      await assert.rejects(async()=>await gadgetCapability.getMetadata());
+      assert.equal((await siblingUser.whoami()).id,'admin@example.com','Different sid stays authenticated');
+      const retry=await browser();await assert.rejects(async()=>await retry.api.authenticate(logged.outcome.token));
+      assert.equal((await sendLogout(logout)).status,200,'Duplicate notification is idempotent');
+      await stop();await start();const afterLogout=await browser();
+      await assert.rejects(async()=>await afterLogout.api.authenticate(logged.outcome.token),'Revocation must survive restart');
+      assert.equal((await afterLogout.api.authenticate(siblingLogin.outcome.token).whoami()).id,'admin@example.com');
+      const everyone=await issuer.signLogout({sid:undefined});
+      assert.equal((await sendLogout(everyone)).status,200);
+      await assert.rejects(async()=>await afterLogout.api.authenticate(siblingLogin.outcome.token));
+      const separateUser=await browser();
+      assert.equal((await separateUser.api.authenticate(signedOther.outcome.token).whoami()).id,'other@example.com','Subject logout must not revoke another account');
+      issuer.setScenario({claims:{sid:'logout-session'}});
+      const raced=await login(await browser());assert.ok(raced.outcome.error,'Logged-out sid cannot create a session');
+      await delay(1100);issuer.setScenario({claims:{sid:'fresh-session'}});
+      const freshBrowser=await browser();const fresh=await login(freshBrowser);assert.ok(fresh.outcome.token,'A fresh IdP login should work');
+      const freshUser=await freshBrowser.api.authenticate(fresh.outcome.token);
+      assert.equal((await sendLogout(everyone)).status,200);
+      assert.equal((await freshUser.whoami()).id,'admin@example.com','Replay must not revoke a later session');
+
+    }
+
   } catch(error) {error.message+='\nNative logs:\n'+logs;throw error;}
 });

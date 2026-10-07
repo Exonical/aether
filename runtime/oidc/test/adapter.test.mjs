@@ -31,7 +31,9 @@ test('signed OIDC code flow rejects forged, replayed, unverified and cross-tenan
     return {state,callback:redirect.headers.get('location')};
   }
   const success = await begin();
-  assert.deepEqual(await (await post('/complete',success)).json(), {email:'admin@example.com',subject:'user-1',issuer:issuer.origin});
+  const identity=await (await post('/complete',success)).json();
+  assert.equal(identity.email,'admin@example.com');assert.equal(identity.subject,'user-1');assert.equal(identity.issuer,issuer.origin);
+  assert.equal(identity.sid,'session-1');assert.equal(typeof identity.issuedAt,'number');
   assert.equal((await post('/complete',success)).status,400);
   for (const scenario of [{rogue:true}, {claims:{iss:'https://other.invalid'}}, {claims:{aud:'another-tenant'}},
     {claims:{nonce:'wrong'}}, {claims:{exp:1}}, {claims:{email_verified:false}}, {claims:{email_verified:'true'}},
@@ -76,4 +78,21 @@ test('discovery cannot broaden outbound destinations or drop PKCE; signed member
     const {url}=await (await post('/begin',{state})).json();const redirect=await fetch(url,{redirect:'manual'});
     assert.equal((await post('/complete',{state,callback:redirect.headers.get('location')})).status,status);
   }
+});
+
+test('back-channel logout validates signatures, audience, event, time and token type independently of ID tokens',async t=>{
+  const issuer=await createIssuer();t.after(()=>issuer.close());
+  const adapter=await createAdapter(await readConfig({...base,AETHER_OIDC_ISSUER:issuer.origin,AETHER_OIDC_ALLOW_HTTP:'true'}));t.after(()=>adapter.close());
+  const port=await adapter.listen(0);
+  const verify=async(logoutToken,tenant='acme')=>fetch(`http://127.0.0.1:${port}/verify-logout`,{method:'POST',
+    headers:{'content-type':'application/json','x-aether-oidc-tenant':tenant},body:JSON.stringify({logoutToken})});
+  assert.equal((await verify(await issuer.signLogout())).status,200);
+  assert.equal((await verify(await issuer.signLogout({sub:undefined}))).status,200,'sid-only logout');
+  assert.equal((await verify(await issuer.signLogout({sid:undefined}))).status,200,'subject-wide logout');
+  assert.equal((await verify(await issuer.signLogout({exp:undefined}))).status,200,'original standard permits no exp; iat is bounded');
+  assert.equal((await verify(await issuer.signLogout({},true))).status,400);
+  assert.equal((await verify(await issuer.signLogout(),'other')).status,403);
+  for(const claims of [{iss:'https://other.invalid'},{aud:'another-client'},{events:{}},{events:{'http://schemas.openid.net/event/backchannel-logout':[]}},
+    {nonce:'ID-token-nonce'},{iat:1},{iat:Math.floor(Date.now()/1000)+60},{exp:1},{jti:''},{sub:undefined,sid:undefined}])
+    assert.equal((await verify(await issuer.signLogout(claims))).status,400,JSON.stringify(claims));
 });
