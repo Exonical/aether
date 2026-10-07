@@ -1,0 +1,16 @@
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: aether-oidc-egress
+spec:
+  endpointSelector:
+    matchLabels:
+      app.kubernetes.io/name: aether-runtime
+  egress:
+    # Replace with the user's exact issuer hostname. Use toEndpoints for an in-cluster IdP.
+    - toFQDNs:
+        - matchName: identity.acme.internal
+      toPorts:
+        - ports:
+            - port: "443"
+              protocol: TCP

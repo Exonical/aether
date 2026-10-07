@@ -58,7 +58,7 @@ The integration test starts real native workerd processes and exercises:
 
 The test uses synthetic password hashes, without storing or printing real credentials. It does not exercise browser UI clicks or the frontend's Argon2 implementation; the production frontend code is bundled unchanged.
 
-Default builds deny ambient outbound networking. Tenant builds can enable the [scoped model adapter](model-gateway.md) for inference to one configured endpoint. Generated Gadgets retain upstream's `globalOutbound: null`. Arbitrary web fetch, OAuth connectors, Git-backed Artifacts, and browser/PDF/screenshot export remain unavailable. The UI may display upstream controls for these features; provider keys alone do not grant network access. Real model-driven agent creation remains unvalidated.
+Default builds deny ambient outbound networking. Tenant builds can enable the [scoped model adapter](model-gateway.md) for inference to one configured endpoint. Generated Gadgets retain upstream's `globalOutbound: null`. Arbitrary web fetch, OAuth resource connectors, Git-backed Artifacts, and browser/PDF/screenshot export remain unavailable. The UI may display upstream controls for these features; provider keys alone do not grant network access. Real model-driven agent creation remains unvalidated.
 
 Scheduler provisioning is tested, but alarm delivery and scheduled callbacks after rescheduling are not. The original diagnostic runtime independently tests native WorkerLoader loading and denied ambient networking. Model-driven Gadget creation, cross-Gadget isolation, storage expiration/conditional-write contracts, and a real Kubernetes rollout remain later acceptance tests.
 
@@ -89,7 +89,7 @@ The container includes only native workerd and the generated artifact; Node.js, 
 
 ## Next work
 
-Scoped internal model transport is available. Implement Authentik sign-in next. Preserve account/approval isolation when adding these services. R2 metadata migration, browser rendering, scheduler recovery tests, and operational recovery follow; adding replicas requires a separate distributed DO ownership design.
+Scoped internal model transport is available. Generic [OIDC sign-in](oidc.md) is available with a Keycloak fixture. Preserve account/approval isolation when adding these services. R2 metadata migration, browser rendering, scheduler recovery tests, and operational recovery follow; adding replicas requires a separate distributed DO ownership design.
 
 For tenant-specific artifacts, user-provided S3 storage, and optional COSI credentials, see [S3 storage](s3-storage.md). For external HTTPS routing using Cilium, see [Gateway API](gateway-api.md).
 
@@ -102,3 +102,5 @@ Tenant builds can enable a [scoped model gateway](model-gateway.md) with `AETHER
 ## Dependency toolchain
 
 Aether pins pnpm 11.28.5. The upstream submodule keeps its own package-manager pin; use `--pm-on-fail=ignore` when installing that workspace to use Aether's validated version. Aether's build, hosted deployment, and local launcher pass the equivalent setting to child processes. Shared catalog entries, the upstream gitlink, Vite 7, and Cap'n Web 0.11 remain aligned with the pinned upstream; major upgrades require separate compatibility work. CI checks root and upstream frozen installs, root test-tool peers, native storage contracts, and workspace state across an old-to-new artifact restart.
+
+Tenant builds can enable [generic OIDC sign-in](oidc.md) with `AETHER_OIDC=true`. This disables password accounts and adds a private, tenant-scoped adapter; it does not enable OAuth resource connectors. The guide includes Windows local testing with Keycloak.

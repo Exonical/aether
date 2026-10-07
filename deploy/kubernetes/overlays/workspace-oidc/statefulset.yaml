@@ -1,0 +1,53 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: aether
+spec:
+  template:
+    spec:
+      containers:
+        - name: workerd
+          env:
+            - name: AETHER_PUBLIC_URL
+              value: https://acme.aether.example
+            - name: AETHER_OIDC_DISPLAY_NAME
+              value: Single sign-on
+            - name: AETHER_OIDC_SESSION_TTL
+              value: "28800"
+            - name: AETHER_ADMINS
+              value: '["admin@acme.internal"]'
+        - name: oidc-adapter
+          image: registry.example.com/aether/oidc:0.1.0
+          env:
+            - name: AETHER_TENANT_ID
+              value: acme
+            - name: AETHER_PUBLIC_URL
+              value: https://acme.aether.example
+          envFrom:
+            - secretRef:
+                name: aether-oidc
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"
+          startupProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9004/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9004/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9004/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 10

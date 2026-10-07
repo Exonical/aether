@@ -35,12 +35,13 @@ export function validateWorkerConfig(config) {
 }
 
 /** Compile the pinned storage Workers and upstream graph into a native workerd config. */
-export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage = "local", kvStorage = "local", modelGateway = false }) {
+export async function createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage = "local", kvStorage = "local", modelGateway = false, oidc = false }) {
   if (!/^[a-zA-Z0-9_-]+$/.test(namespace)) throw new Error("Invalid permanent namespace identity");
   if (!["local", "s3"].includes(storage)) throw new Error("Unsupported blob storage mode");
   if (!["local", "postgres"].includes(kvStorage)) throw new Error("Unsupported KV storage mode");
   if (kvStorage === "postgres" && !namespace.startsWith("aether-tenant-")) throw new Error("PostgreSQL KV requires a tenant artifact");
   if (modelGateway && !namespace.startsWith("aether-tenant-")) throw new Error("Model gateway requires a tenant artifact");
+  if (oidc && !namespace.startsWith("aether-tenant-")) throw new Error("OIDC requires a tenant artifact");
   const kvOptions = WorkerOptionsSchema.parse({ config: { name: "aether-kv", compatibilityDate: "2026-09-04",
     env: Object.fromEntries(workers.flatMap(({ config }) => (config.kv_namespaces || []).map(({ binding }) =>
       [binding, { type: "kv", id: `${namespace}-${config.name}-${binding}` }]))) } });
@@ -80,6 +81,28 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       }
     }
   }
+  const oidcBrowserModule = oidc ? await readFile(join(root, "src/oidc-browser.js"), "utf8") : null;
+  function patchOidcModules(modules) {
+    let constructorCount = 0, sessionCount = 0;
+    const result = modules.map(module => {
+      if (!module.esModule) return module;
+      let source = module.esModule;
+      const constructor = /new PublicApiImpl\(ctx, (env\d*), abortSession, accessPayload\)/g;
+      const session = "if (!session) {\n      throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);";
+      if (source.match(constructor)) {
+        constructorCount += [...source.matchAll(constructor)].length;
+        source = 'import { bindOidcBrowser, oidcSessionExpired } from "./oidc-browser.js";\n' + source.replace(constructor, "new PublicApiImpl(ctx, await bindOidcBrowser($1, req), abortSession, accessPayload)");
+      }
+      if (source.includes(session)) {
+        sessionCount += source.split(session).length - 1;
+        source = source.replace(session, "if (oidcSessionExpired(session, this.env)) {\n      throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);");
+      }
+      return {...module, esModule:source};
+    });
+    if (constructorCount !== 1 || sessionCount !== 1) throw new Error(`Pinned OIDC backend contract changed: constructor=${constructorCount}, session=${sessionCount}`);
+    result.push({name:"oidc-browser.js", esModule:oidcBrowserModule});
+    return result;
+  }
   const services = workers.map(({ config, modules }) => {
     const classes = validateWorkerConfig(config);
     const bindings = [
@@ -92,6 +115,12 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
         name: binding, service: { name: service, entrypoint, ...(props ? { props: { json: JSON.stringify(props) } } : {}) },
       })),
     ];
+    if (oidc && ["router", "workshop-backend"].includes(config.name)) bindings.push({name:"GATEKEEPER_OIDC", service:{name:"aether:oidc", ...(config.name === "workshop-backend" ? {entrypoint:"GatekeeperVendor"} : {})}});
+    if (oidc && config.name === "workshop-backend") bindings.push(
+      {name:"AUTH_GATEKEEPERS", text:"oidc"}, {name:"DISABLE_PASSWORD_AUTH", text:"true"},
+      {name:"OIDC_PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"},
+      {name:"AETHER_OIDC_SESSION_TTL", fromEnvironment:"AETHER_OIDC_SESSION_TTL"},
+    );
     if (config.name === "router") bindings.push({ name: "ASSETS", service: { name: "aether:assets" } });
     if (config.name === "workshop-backend") {
       bindings.push(
@@ -109,7 +138,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     const names = bindings.map(binding => binding?.name);
     if (names.includes(undefined) || new Set(names).size !== names.length) throw new Error(`Invalid or duplicate binding in ${config.name}`);
     return { name: config.name, worker: {
-      modules, compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags || [],
+      modules: oidc && config.name === "workshop-backend" ? patchOidcModules(modules) : modules, compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags || [],
       bindings,
       ...(modelGateway && config.name === "workshop-backend" ? { globalOutbound: { name: "aether:model-outbound" } } : {}),
       ...(classes.length ? {
@@ -129,10 +158,22 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     } },
     { name: "aether:entry", worker: {
       compatibilityDate: "2026-09-04",
-      modules: [{ name: "entry.js", esModule: await readFile(join(root, "src/workspace-entry.js"), "utf8") }],
-      bindings: [{ name: "ROUTER", service: { name: "router" } }, kvBindings.find(binding => binding.name === "BLUEPRINTS")],
+      modules: [{ name: "entry.js", esModule: await readFile(join(root, "src/workspace-entry.js"), "utf8") },
+        {name:"oidc-browser.js", esModule:await readFile(join(root, "src/oidc-browser.js"), "utf8")}],
+      bindings: [...(oidc ? [{name:"OIDC_PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"}] : []), { name: "ROUTER", service: { name: "router" } }, kvBindings.find(binding => binding.name === "BLUEPRINTS")],
     } },
     { name: "internet", network: { allow: [] } },
+  );
+  if (oidc) services.push(
+    {name:"aether:oidc-endpoint", external:{address:"127.0.0.1:9004", http:{}}},
+    {name:"aether:oidc", worker:{compatibilityDate:"2026-09-04", compatibilityFlags:["allow_irrevocable_stub_storage"],
+      modules:[{name:"oidc-gatekeeper.js", esModule:await readFile(join(root,"src/oidc-gatekeeper.js"),"utf8")},
+        {name:"oidc-browser.js", esModule:await readFile(join(root,"src/oidc-browser.js"),"utf8")}],
+      bindings:[{name:"ADAPTER", service:{name:"aether:oidc-endpoint"}}, {name:"TENANT", text:namespace.slice("aether-tenant-".length)},
+        {name:"PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"}, {name:"DISPLAY_NAME", fromEnvironment:"AETHER_OIDC_DISPLAY_NAME"}],
+      durableObjectNamespaces:["OidcLogin", "OidcIdentity"].map(className => ({className, uniqueKey:`${namespace}-oidc-${className}`, enableSql:true})),
+      durableObjectStorage:{localDisk:"aether:do-storage"},
+    }},
   );
   if (storage === "s3") services.push(
     { name: "aether:s3-endpoint", external: { address: "127.0.0.1:9001", http: {} } },

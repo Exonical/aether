@@ -1,0 +1,81 @@
+{
+  "realm": "aether",
+  "enabled": true,
+  "sslRequired": "none",
+  "registrationAllowed": false,
+  "duplicateEmailsAllowed": false,
+  "clients": [
+    {
+      "clientId": "aether",
+      "enabled": true,
+      "protocol": "openid-connect",
+      "publicClient": false,
+      "secret": "fixture-secret",
+      "standardFlowEnabled": true,
+      "implicitFlowEnabled": false,
+      "directAccessGrantsEnabled": false,
+      "serviceAccountsEnabled": false,
+      "redirectUris": [
+        "http://127.0.0.1:8080/gatekeeper/oidc/oauth"
+      ],
+      "webOrigins": [
+        "http://127.0.0.1:8080"
+      ],
+      "defaultClientScopes": [
+        "profile",
+        "email"
+      ],
+      "attributes": {
+        "pkce.code.challenge.method": "S256",
+        "id.token.signed.response.alg": "RS256"
+      }
+    }
+  ],
+  "users": [
+    {
+      "username": "admin",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "admin@example.com",
+      "firstName": "admin",
+      "lastName": "Fixture",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aether-test-secret",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "other",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "other@example.com",
+      "firstName": "other",
+      "lastName": "Fixture",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aether-test-secret",
+          "temporary": false
+        }
+      ]
+    },
+    {
+      "username": "new",
+      "enabled": true,
+      "emailVerified": true,
+      "email": "new@example.com",
+      "firstName": "new",
+      "lastName": "Fixture",
+      "credentials": [
+        {
+          "type": "password",
+          "value": "aether-test-secret",
+          "temporary": false
+        }
+      ]
+    }
+  ]
+}
