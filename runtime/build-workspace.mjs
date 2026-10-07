@@ -14,6 +14,9 @@ const upstream = resolve(runtime, "../cloudflare-os");
 const output = resolve(process.env.AETHER_BUILD_DIR || join(runtime, "dist/workspace"));
 const tenantId = process.env.AETHER_TENANT_ID;
 if (tenantId && !/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenantId)) throw new Error("Invalid AETHER_TENANT_ID");
+const oidc = process.env.AETHER_OIDC === "true";
+if (process.env.AETHER_OIDC && !["true", "false"].includes(process.env.AETHER_OIDC)) throw new Error("Invalid AETHER_OIDC");
+if (oidc && !tenantId) throw new Error("OIDC requires AETHER_TENANT_ID");
 const modelGateway = process.env.AETHER_MODEL_GATEWAY === "true";
 if (process.env.AETHER_MODEL_GATEWAY && !["true", "false"].includes(process.env.AETHER_MODEL_GATEWAY)) throw new Error("Invalid AETHER_MODEL_GATEWAY");
 if (modelGateway && !tenantId) throw new Error("Model gateway requires AETHER_TENANT_ID");
@@ -73,30 +76,30 @@ try {
     contentType: types[extname(path)] || "application/octet-stream",
   }]));
   const namespace = tenantId ? `aether-tenant-${tenantId}` : "aether-workspace-v1";
-  const { binary, directories, config } = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, modelGateway });
+  const { binary, directories, config } = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, oidc, modelGateway });
   await mkdir(output, { recursive: true });
   await rm(join(output, "assets"), { recursive: true, force: true });
   await cp(frontend, join(output, "assets"), { recursive: true });
   await writeFile(join(output, "workspace.capnp.bin"), binary);
   // Both modes use the same stable object identities and local metadata directories.
   if (tenantId) {
-    const s3 = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage: "s3", modelGateway });
+    const s3 = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage: "s3", oidc, modelGateway });
     await writeFile(join(output, "workspace-s3.capnp.bin"), s3.binary);
     for (const storage of ["local", "s3"]) {
-      const postgres = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage, kvStorage: "postgres", modelGateway });
+      const postgres = await createWorkspaceConfig({ workers, assetManifest, namespace, scratch, storage, kvStorage: "postgres", oidc, modelGateway });
       await writeFile(join(output, storage === "s3" ? "workspace-postgres-s3.capnp.bin" : "workspace-postgres.capnp.bin"), postgres.binary);
     }
   } else {
     for (const file of ["workspace-s3.capnp.bin", "workspace-postgres.capnp.bin", "workspace-postgres-s3.capnp.bin"]) await rm(join(output, file), { force: true });
   }
   await writeFile(join(output, "manifest.json"), JSON.stringify({
-    schemaVersion: 1, namespace, modelGateway, ...(tenantId ? { tenantId, blobStorageModes: ["local", "s3"], kvStorageModes: ["local", "postgres"] } : { blobStorageModes: ["local"], kvStorageModes: ["local"] }),
+    schemaVersion: 1, namespace, modelGateway, oidc, ...(tenantId ? { tenantId, blobStorageModes: ["local", "s3"], kvStorageModes: ["local", "postgres"] } : { blobStorageModes: ["local"], kvStorageModes: ["local"] }),
     upstreamCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: upstream, encoding: "utf8" }).trim(),
     workerdVersion: JSON.parse(await readFile(join(runtime, "package.json"), "utf8")).dependencies.workerd,
     storageWorkersVersion: JSON.parse(await readFile(join(runtime, "package.json"), "utf8")).devDependencies.miniflare,
     workers: workers.map(({ config }) => config.name), directories,
     durableObjects: config.services.flatMap(service => (service.worker?.durableObjectNamespaces || []).map(value => ({ service: service.name, ...value }))),
-    disabledFeatures: ["browser-rendering", ...(modelGateway ? [] : ["external-model-access"]), "external-gatekeepers", "authentik-oidc", "artifacts"],
+    disabledFeatures: ["browser-rendering", ...(modelGateway ? [] : ["external-model-access"]), "external-gatekeepers", ...(oidc ? [] : ["oidc"]), "artifacts"],
   }, null, 2) + "\n");
   console.log(`Standalone workspace built: ${output}`);
 } finally {

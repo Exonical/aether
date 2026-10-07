@@ -66,3 +66,5 @@ The overlay changes only `runtimeClassName`. Configure Kata's runtime handler, c
 Preserve `state-aether-0`, the namespace identity in `runtime/aether.capnp`, and the pinned configuration. Do not run a second active workerd process against the volume. Stop the StatefulSet before copying the entire SQLite directory for a consistent initial backup, then restore with the same image and namespace key. Test recovery before changing the workerd version because local-disk storage is experimental.
 
 The image has a read-only root filesystem, non-root UID/GID 10001, no Linux capabilities, a seccomp profile, and writable mounts only for SQLite state and temporary files. Resource limits are starter values; set them from workload measurements when the Workshop is integrated.
+
+The [`workspace-oidc` overlay](overlays/workspace-oidc) adds generic OIDC to the PostgreSQL, S3, model, and Cilium Gateway API example. Build with `AETHER_OIDC=true` and follow the [provider and local Keycloak guide](../../docs/oidc.md). Configure a client and issuer policy per tenant.
