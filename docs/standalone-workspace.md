@@ -4,12 +4,13 @@ This is the first native Cloudflare OS graph in Aether. One workerd process host
 
 ## Build and launch
 
-With Node.js 24.19+, npm, pnpm 11.17+ and Git installed:
+With Node.js 24.19+, npm, pnpm 11.28.5 and Git installed:
 
 ```sh
 git submodule update --init
+npm install --global pnpm@11.28.5
 npm ci --prefix runtime
-pnpm --dir cloudflare-os install --frozen-lockfile
+pnpm --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
 npm run workspace:build --prefix runtime
 npm run workspace:test --prefix runtime
 npm run workspace:start --prefix runtime
@@ -39,7 +40,7 @@ Build dependencies must already be installed. The build pipeline is not an offli
 | `kv/` | KV namespace SQLite metadata and binary values, including avatars and public Context metadata |
 | `r2/` | R2 bucket SQLite metadata and Blueprint blob files |
 
-This storage is supplied by Miniflare **5.20260801.1-alpha**'s pinned protocol Workers, compiled into the config. The Miniflare Node server, Node proxy bindings, debug/control endpoints, and optional Node loopback service are not shipped. The running process is native workerd **1.20261006.1**. These local protocol Workers are evaluation infrastructure. The optional [S3 adapter](s3-storage.md) moves R2 blob contents to a user-provided endpoint while keeping metadata local; [PostgreSQL KV](postgres-storage.md) is also available; application Durable Objects and R2 metadata remain local.
+This storage is supplied by Miniflare **5.20261006.0-alpha**'s pinned protocol Workers, compiled into the config. The Miniflare Node server, Node proxy bindings, debug/control endpoints, and optional Node loopback service are not shipped. The running process is native workerd **1.20261007.1**. These local protocol Workers are evaluation infrastructure. The optional [S3 adapter](s3-storage.md) moves R2 blob contents to a user-provided endpoint while keeping metadata local; [PostgreSQL KV](postgres-storage.md) is also available; application Durable Objects and R2 metadata remain local.
 
 The binary config embeds code, not build-host absolute paths or credentials. Disk paths are supplied at launch. Keep the artifact, permanent namespace identities and all three state directories together. Stop workerd before taking an initial file backup. This is a fresh state layout; it does not import the diagnostic counter's database or Wrangler development data.
 
@@ -97,3 +98,7 @@ For external KV records and database role isolation, see [PostgreSQL storage](po
 ## Optional on-prem inference
 
 Tenant builds can enable a [scoped model gateway](model-gateway.md) with `AETHER_MODEL_GATEWAY=true`. Default artifacts retain denied ambient networking. The private adapter supports user-provided OpenAI-compatible and Anthropic endpoints without enabling Gadget network access.
+
+## Dependency toolchain
+
+Aether pins pnpm 11.28.5. The upstream submodule keeps its own package-manager pin; use `--pm-on-fail=ignore` when installing that workspace to use Aether's validated version. Aether's build, hosted deployment, and local launcher pass the equivalent setting to child processes. Shared catalog entries, the upstream gitlink, Vite 7, and Cap'n Web 0.11 remain aligned with the pinned upstream; major upgrades require separate compatibility work. CI checks root and upstream frozen installs, root test-tool peers, native storage contracts, and workspace state across an old-to-new artifact restart.

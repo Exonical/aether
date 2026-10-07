@@ -23,6 +23,7 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
   let child;
   let postgresAdapter, postgresPort;
   let output = "";
+  let starts = 0;
   async function stop() {
     if (!child || child.exitCode !== null || child.signalCode !== null) return;
     const exited = once(child, "exit");
@@ -35,6 +36,8 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     child = spawn(process.execPath, [join(root, "run-workspace.mjs")], {
       env: { ...process.env, AETHER_STATE_DIR: state, AETHER_PORT: String(port), AETHER_ADMINS: '["admin"]',
         ...(postgresPort ? { AETHER_PG_ADAPTER_PORT: String(postgresPort) } : {}),
+        ...(starts++ === 0 && process.env.AETHER_TEST_PREVIOUS_BUILD_DIR
+          ? { AETHER_BUILD_DIR: process.env.AETHER_TEST_PREVIOUS_BUILD_DIR } : {}),
       },
       stdio: ["ignore", "pipe", "pipe"],
     });

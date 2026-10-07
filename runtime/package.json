@@ -14,11 +14,11 @@
     "workspace:test": "node --test integration/*.test.mjs"
   },
   "dependencies": {
-    "workerd": "1.20261006.1"
+    "workerd": "1.20261007.1"
   },
   "devDependencies": {
     "capnweb": "0.11.1",
     "jsonc-parser": "3.3.1",
-    "miniflare": "5.20260801.1-alpha"
+    "miniflare": "5.20261006.0-alpha"
   }
 }

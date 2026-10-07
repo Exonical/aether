@@ -30,6 +30,7 @@ for (const name of packageNames) {
 function runNode(file, args, cwd) {
   execFileSync(process.execPath, [file, ...args], { cwd, stdio: "inherit", env: {
     ...process.env, VITE_CF_ACCESS_MODE: "false",
+    pnpm_config_pm_on_fail: "ignore", // Use Aether's tested pnpm; do not auto-download the upstream pin.
     WRANGLER_SEND_METRICS: "false", WRANGLER_SEND_ERROR_REPORTS: "false", DO_NOT_TRACK: "1",
   } });
 }
@@ -91,7 +92,8 @@ try {
   await writeFile(join(output, "manifest.json"), JSON.stringify({
     schemaVersion: 1, namespace, modelGateway, ...(tenantId ? { tenantId, blobStorageModes: ["local", "s3"], kvStorageModes: ["local", "postgres"] } : { blobStorageModes: ["local"], kvStorageModes: ["local"] }),
     upstreamCommit: execFileSync("git", ["rev-parse", "HEAD"], { cwd: upstream, encoding: "utf8" }).trim(),
-    workerdVersion: "1.20261006.1", storageWorkersVersion: "5.20260801.1-alpha",
+    workerdVersion: JSON.parse(await readFile(join(runtime, "package.json"), "utf8")).dependencies.workerd,
+    storageWorkersVersion: JSON.parse(await readFile(join(runtime, "package.json"), "utf8")).devDependencies.miniflare,
     workers: workers.map(({ config }) => config.name), directories,
     durableObjects: config.services.flatMap(service => (service.worker?.durableObjectNamespaces || []).map(value => ({ service: service.name, ...value }))),
     disabledFeatures: ["browser-rendering", ...(modelGateway ? [] : ["external-model-access"]), "external-gatekeepers", "authentik-oidc", "artifacts"],

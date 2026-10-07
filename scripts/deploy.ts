@@ -659,7 +659,7 @@ function runCommand(
 // checkout path containing a space.
 function run(args: string[], cwd = root, env: NodeJS.ProcessEnv = process.env): void {
   const [command, argv] = pnpmCommand(args, env);
-  runCommand(command, argv, cwd, env, `pnpm ${args.join(" ")}`);
+  runCommand(command, argv, cwd, { ...env, pnpm_config_pm_on_fail: "ignore" }, `pnpm ${args.join(" ")}`);
 }
 
 /**
