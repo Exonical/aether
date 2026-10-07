@@ -57,7 +57,7 @@ The integration test starts real native workerd processes and exercises:
 
 The test uses synthetic password hashes, without storing or printing real credentials. It does not exercise browser UI clicks or the frontend's Argon2 implementation; the production frontend code is bundled unchanged.
 
-All ambient outbound networking is denied, and generated Gadgets retain upstream's `globalOutbound: null`. Therefore external inference, web fetch, OAuth connectors, Git-backed Artifacts, and browser/PDF/screenshot export are unavailable. The UI may display upstream controls for these features; configuring a provider key does not enable network access. This milestone is workspace evaluation, not an end-to-end AI agent deployment.
+Default builds deny ambient outbound networking. Tenant builds can enable the [scoped model adapter](model-gateway.md) for inference to one configured endpoint. Generated Gadgets retain upstream's `globalOutbound: null`. Arbitrary web fetch, OAuth connectors, Git-backed Artifacts, and browser/PDF/screenshot export remain unavailable. The UI may display upstream controls for these features; provider keys alone do not grant network access. Real model-driven agent creation remains unvalidated.
 
 Scheduler provisioning is tested, but alarm delivery and scheduled callbacks after rescheduling are not. The original diagnostic runtime independently tests native WorkerLoader loading and denied ambient networking. Model-driven Gadget creation, cross-Gadget isolation, storage expiration/conditional-write contracts, and a real Kubernetes rollout remain later acceptance tests.
 
@@ -88,8 +88,12 @@ The container includes only native workerd and the generated artifact; Node.js, 
 
 ## Next work
 
-Implement a narrowly scoped internal model-gateway binding and its capability grants, then Authentik sign-in. Preserve account/approval isolation when adding these services. R2 metadata migration, browser rendering, scheduler recovery tests, and operational recovery follow; adding replicas requires a separate distributed DO ownership design.
+Scoped internal model transport is available. Implement Authentik sign-in next. Preserve account/approval isolation when adding these services. R2 metadata migration, browser rendering, scheduler recovery tests, and operational recovery follow; adding replicas requires a separate distributed DO ownership design.
 
 For tenant-specific artifacts, user-provided S3 storage, and optional COSI credentials, see [S3 storage](s3-storage.md). For external HTTPS routing using Cilium, see [Gateway API](gateway-api.md).
 
 For external KV records and database role isolation, see [PostgreSQL storage](postgres-storage.md).
+
+## Optional on-prem inference
+
+Tenant builds can enable a [scoped model gateway](model-gateway.md) with `AETHER_MODEL_GATEWAY=true`. Default artifacts retain denied ambient networking. The private adapter supports user-provided OpenAI-compatible and Anthropic endpoints without enabling Gadget network access.

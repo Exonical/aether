@@ -24,6 +24,7 @@ const args = ["serve", join(output, file), "--binary", "--experimental", `--sock
   `--directory-path=aether:assets-disk=${join(output, "assets")}`];
 if (storage === "s3") args.push(`--external-addr=aether:s3-endpoint=127.0.0.1:${process.env.AETHER_S3_PORT || "9001"}`);
 if (kvStorage === "postgres") args.push(`--external-addr=aether:postgres-endpoint=127.0.0.1:${process.env.AETHER_PG_ADAPTER_PORT || "9002"}`);
+if (manifest.modelGateway) args.push(`--external-addr=aether:model-endpoint=127.0.0.1:${process.env.AETHER_MODEL_PORT || "9003"}`);
 for (const { service, subdirectory } of manifest.directories) {
   const path = join(state, subdirectory);
   await mkdir(path, { recursive: true });

@@ -1,0 +1,41 @@
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: aether
+spec:
+  template:
+    spec:
+      containers:
+        - name: model-adapter
+          image: registry.example.com/aether/model-gateway:0.1.0
+          env:
+            - name: AETHER_TENANT_ID
+              value: acme
+          envFrom:
+            - secretRef:
+                name: aether-models
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          resources:
+            requests:
+              cpu: "100m"
+              memory: "64Mi"
+            limits:
+              cpu: "1"
+              memory: "256Mi"
+          startupProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9003/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9003/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9003/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            periodSeconds: 10
