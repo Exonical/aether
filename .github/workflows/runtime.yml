@@ -54,7 +54,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - run: npm install --global pnpm@11.28.5
+      - run: npm install --global pnpm@12.10.1
       - run: pnpm install --frozen-lockfile
       - run: pnpm peers check
       - run: node --test 'scripts/**/*.test.ts'
@@ -85,7 +85,7 @@ jobs:
           node-version: '24'
           cache: npm
           cache-dependency-path: runtime/package-lock.json
-      - run: npm install --global pnpm@11.28.5
+      - run: npm install --global pnpm@12.10.1
       - run: npm ci --prefix runtime
       - run: npm ci --prefix runtime/postgres --ignore-scripts
       - name: Verify native KV contracts and PostgreSQL role isolation
