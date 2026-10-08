@@ -61,6 +61,7 @@ jobs:
       - run: pnpm --filter custom-gatekeeper test:run
       - run: pnpm --filter error-reporter test:run
       - run: pnpm --filter @gadgets/error-reporting test:run
+      - run: pnpm exec vp run -r --no-cache build
   workspace:
     runs-on: ubuntu-24.04
     services:
