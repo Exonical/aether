@@ -569,7 +569,7 @@ test("never lets a deploy replay a cached build artifact", () => {
   assert.ok(commands.length > 0, "expected at least one build command");
   for (const { args } of commands) {
     const command = args.join(" ");
-    // `pnpm --filter <pkg> build` cannot see a Vite+ task, and two of the three submodule targets
+    // `pnpm --filter <pkg> build` cannot see a Vite+ task, and two of the three fork targets
     // are now tasks rather than scripts. `vp run` runs both.
     assert.ok(command.includes("vp run"),
       `build step does not go through vp run: ${command}`);

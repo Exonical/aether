@@ -9,7 +9,7 @@ A self-hosted AI workspace and application runtime, built on [Cloudflare OS](htt
 Requires Git, Node.js **24.19+**, pnpm **11.28.5**, and npm. Build dependencies are installed once; the running server uses only workerd and local disk.
 
 ```sh
-git clone --recurse-submodules https://github.com/Exonical/aether.git
+git clone https://github.com/Exonical/aether.git
 cd aether
 npm install --global pnpm@11.28.5
 npm ci --prefix runtime
@@ -28,12 +28,12 @@ The build invokes the compilers directly and uses Wrangler only for offline dry-
 Requires Git, Node.js **24.19+**, and pnpm **11.28.5**. No Cloudflare account is required for default local mode.
 
 ```sh
-git clone --recurse-submodules https://github.com/Exonical/aether.git
+git clone https://github.com/Exonical/aether.git
 cd aether
 pnpm run-local
 ```
 
-For an existing checkout, run `git submodule update --init` first. The launcher installs upstream dependencies, builds the frontend, and starts the local server at **http://localhost:8787**. The first build takes several minutes. Create an account named `admin` to access upstream administrator features; configure your models there. External providers require their credentials. Cloudflare-only features are not reproduced by this launcher.
+The launcher installs upstream dependencies, builds the frontend, and starts the local server at **http://localhost:8787**. The first build takes several minutes. Create an account named `admin` to access upstream administrator features; configure your models there. External providers require their credentials. Cloudflare-only features are not reproduced by this launcher.
 
 This development server is for local evaluation. See [self-hosting](docs/self-hosting.md) for state, dependencies, and the production port.
 
@@ -92,7 +92,7 @@ Add Authentik sign-in, then implement R2 metadata migration and browser renderin
 
 | Path | Purpose |
 | --- | --- |
-| `cloudflare-os/` | Upstream submodule pinned at `4358072f8cb1bc9ddfb6ee11122e194c76cd71e0` |
+| `cloudflare-os/` | Aether-owned fork of Cloudflare OS; [source provenance](cloudflare-os/UPSTREAM.md) |
 | `runtime/` | Diagnostic runtime and native workspace build, config, images, and integration tests |
 | `deploy/kubernetes/` | Diagnostic base, workspace, tenant S3, and Cilium Gateway API overlays |
 | `scripts/run-local.mjs` | Launcher for the pinned upstream development workspace |

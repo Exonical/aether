@@ -65,7 +65,6 @@ Anything past that needs your own code or settings, which is what this repositor
 Install [Node.js 24.19 or newer](https://nodejs.org/) (the deploy scripts are TypeScript run directly by `node`), [pnpm 11.28.5](https://pnpm.io/installation), and authenticate [Wrangler](https://developers.cloudflare.com/workers/wrangler/commands/#login):
 
 ```sh
-git submodule update --init
 pnpm install
 pnpm --dir cloudflare-os install
 pnpm exec wrangler login
@@ -126,7 +125,7 @@ The complete control reference and recipes live in [Customization](customization
 - Stream production events with [`wrangler tail`](https://developers.cloudflare.com/workers/observability/logs/real-time-logs/).
 - Triage explicit failures and choose export destinations with the [observability guide](observability.md).
 - Roll a Worker back from its dashboard deployment history or with [`wrangler rollback`](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/).
-- Follow the [upgrade checklist](customization.md#upgrade) before changing the pinned submodule.
+- Follow the [upgrade checklist](customization.md#upgrade) before importing upstream changes.
 - Review the upstream Cloudflare OS documentation and release history before adopting behavior changes.
 
 ### Moving here from the hosted deploy (os.cloudflare.app/deploy)

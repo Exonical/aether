@@ -58,7 +58,7 @@ Changing KV backends does **not** copy existing KV data. Use a fresh state direc
 
 ## Native protocol and operations
 
-The build retains the pinned native KV Worker, including key/metadata/value limits, binary/text/JSON/stream reads, bulk reads, expiry validation, and list response encoding. It replaces only that Worker's KeyValueStorage implementation, guarded against unexpected changes in the pinned source. The upstream submodule is unchanged.
+The build retains the pinned native KV Worker, including key/metadata/value limits, binary/text/JSON/stream reads, bulk reads, expiry validation, and list response encoding. It replaces only that Worker's KeyValueStorage implementation, guarded against unexpected changes in the pinned source. The native KV patch is applied at build time; the fork source is maintained in `cloudflare-os/`.
 
 Values are stored as bytea with atomic per-key upserts. Keys use their UTF-8 bytes for deterministic ordering, and prefix matching treats percent signs and underscores literally. Pagination cursors are scoped to the namespace and prefix. Reads/lists exclude expired values using the database clock; the adapter removes up to 1,000 expired rows every minute. Clock synchronization remains an operator responsibility.
 

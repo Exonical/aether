@@ -1,13 +1,12 @@
 # Standalone workspace
 
-This is the first native Cloudflare OS graph in Aether. One workerd process hosts Router, Workshop, Context, Scheduler, the static asset service, and local KV/R2 protocol Workers. The upstream submodule is unchanged.
+This is the first native Cloudflare OS graph in Aether. One workerd process hosts Router, Workshop, Context, Scheduler, the static asset service, and local KV/R2 protocol Workers. The Cloudflare OS source is maintained directly in this repository under `cloudflare-os/`.
 
 ## Build and launch
 
 With Node.js 24.19+, npm, pnpm 11.28.5 and Git installed:
 
 ```sh
-git submodule update --init
 npm install --global pnpm@11.28.5
 npm ci --prefix runtime
 pnpm --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
@@ -101,6 +100,6 @@ Tenant builds can enable a [scoped model gateway](model-gateway.md) with `AETHER
 
 ## Dependency toolchain
 
-Aether pins pnpm 11.28.5. The upstream submodule keeps its own package-manager pin; use `--pm-on-fail=ignore` when installing that workspace to use Aether's validated version. Aether's build, hosted deployment, and local launcher pass the equivalent setting to child processes. Shared catalog entries, the upstream gitlink, Vite 7, and Cap'n Web 0.11 remain aligned with the pinned upstream; major upgrades require separate compatibility work. CI checks root and upstream frozen installs, root test-tool peers, native storage contracts, and workspace state across an old-to-new artifact restart.
+Aether pins pnpm 11.28.5. The fork keeps its own package-manager pin; use `--pm-on-fail=ignore` when installing that workspace to use Aether's validated version. Aether's build, hosted deployment, and local launcher pass the equivalent setting to child processes. Shared catalog entries, the fork workspace, Vite 7, and Cap'n Web 0.12 remain aligned; major upgrades require separate compatibility work. CI checks root and upstream frozen installs, root test-tool peers, native storage contracts, and workspace state across an old-to-new artifact restart.
 
 Tenant builds can enable [generic OIDC sign-in](oidc.md) with `AETHER_OIDC=true`. This disables password accounts and adds a private, tenant-scoped adapter; it does not enable OAuth resource connectors. The guide includes Windows local testing with Keycloak.
