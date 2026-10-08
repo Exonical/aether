@@ -7,11 +7,11 @@ import {createGitBroker} from './git-broker.mjs';
 
 /** A namespace-scoped controller. Kubernetes credentials never enter execution pods. */
 export function kubernetesClient({baseUrl, credentials}) {
-  return async (method, path, body) => {
+  return async (method, path, body, {contentType = 'application/json'} = {}) => {
     const [token, ca] = await Promise.all([readFile(`${credentials}/token`, 'utf8'), readFile(`${credentials}/ca.crt`)]);
     return new Promise((resolve, reject) => {
       const request = httpsRequest(new URL(path, baseUrl), {method, ca,
-        headers: {authorization: `Bearer ${token.trim()}`, 'content-type': 'application/json'}}, response => {
+        headers: {authorization: `Bearer ${token.trim()}`, 'content-type': contentType}}, response => {
         let size = 0; const chunks = [];
         response.on('data', chunk => {
           size += chunk.length;
@@ -30,8 +30,10 @@ export function kubernetesClient({baseUrl, credentials}) {
   };
 }
 
-export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', imagePullPolicy = 'IfNotPresent', maxWorkspaces = 32, imagePullSecrets = [], gitBroker = createGitBroker({})}) {
+export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', imagePullPolicy = 'IfNotPresent', maxWorkspaces = 32, imagePullSecrets = [], gitBroker = createGitBroker({}), idleTimeoutSeconds = 1800, idleCheckIntervalMs = 60000, now = Date.now}) {
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenant) || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(namespace) || !image || !runtimeClass || !['Always', 'IfNotPresent', 'Never'].includes(imagePullPolicy)) throw new Error('Invalid execution configuration');
+  if (!Number.isInteger(idleTimeoutSeconds) || idleTimeoutSeconds < 0 || idleTimeoutSeconds > 604800
+      || !Number.isInteger(idleCheckIntervalMs) || idleCheckIntervalMs < 1) throw new Error('Invalid idle suspension configuration');
   const base = `/api/v1/namespaces/${namespace}`;
   const locks = new Set();
   let provisioning = false;
@@ -59,6 +61,53 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
   const status = pod => ({state: !pod ? 'suspended' : pod.metadata.deletionTimestamp ? 'stopping'
     : pod.status?.conditions?.some(c => c.type === 'Ready' && c.status === 'True') ? 'ready'
     : pod.status?.phase === 'Failed' ? 'failed' : 'starting'});
+  const activityAnnotation = 'aether.dev/last-activity';
+  const touch = async pod => {
+    if (!idleTimeoutSeconds || pod.metadata.deletionTimestamp) return;
+    // Persist activity on the pod so a controller restart cannot reset the idle deadline.
+    await call('PATCH', `${base}/pods/${pod.metadata.name}`, [
+      {op: 'test', path: '/metadata/uid', value: pod.metadata.uid},
+      {op: 'add', path: '/metadata/annotations/aether.dev~1last-activity', value: String(now())},
+    ], {contentType: 'application/json-patch+json'});
+  };
+  const suspend = async (id, pod, idle = false) => {
+    if (!idle) gitBroker.revokeWorkspace(id);
+    if (pod) await call('DELETE', `${base}/pods/${pod.metadata.name}`, {apiVersion: 'v1', kind: 'DeleteOptions',
+      preconditions: {uid: pod.metadata.uid, ...(idle ? {resourceVersion: pod.metadata.resourceVersion} : {})}});
+    if (idle) gitBroker.revokeWorkspace(id);
+  };
+  let reconciling = false;
+  const suspendIdleWorkspaces = async () => {
+    const result = {suspended: 0, failed: 0};
+    if (!idleTimeoutSeconds || reconciling) return result;
+    reconciling = true;
+    try {
+      let continuation = '';
+      do {
+        const page = await call('GET', `${base}/pods?labelSelector=${encodeURIComponent(`aether.dev/execution=${tenant}`)}&limit=100${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
+        for (const candidate of page.items) {
+          const id = candidate.metadata?.annotations?.['aether.dev/workspace'];
+          if (!/^[a-f0-9]{64}$/.test(id ?? '') || candidate.metadata.name !== identity(id).name
+              || candidate.metadata.labels?.['aether.dev/execution'] !== tenant || locks.has(id) || locks.size >= 8) continue;
+          locks.add(id);
+          try {
+            // Re-read after acquiring the same lock used by commands; the list may be stale.
+            const pod = await getPod(candidate.metadata.name, id);
+            if (!pod || pod.metadata.deletionTimestamp) continue;
+            const recorded = pod.metadata.annotations?.[activityAnnotation];
+            // Older pods have no activity marker. Their creation time starts the deadline.
+            const activity = /^\d+$/.test(recorded ?? '') ? Number(recorded) : Date.parse(pod.metadata.creationTimestamp);
+            if (!Number.isSafeInteger(activity) || now() - activity < idleTimeoutSeconds * 1000) continue;
+            await suspend(id, pod, true);
+            result.suspended++;
+          } catch {result.failed++;}
+          finally {locks.delete(id);}
+        }
+        continuation = page.metadata?.continue ?? '';
+      } while (continuation);
+      return result;
+    } finally {reconciling = false;}
+  };
   const operation = async (id, body) => {
     const {name, metadata} = identity(id);
     let pod = await getPod(name, id);
@@ -84,8 +133,17 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
       owned(pvc.body, id);
       if (pvc.body.metadata.annotations?.['aether.dev/identity'] !== fingerprint
           || (pod && pod.metadata.annotations?.['aether.dev/identity'] !== fingerprint)) throw new Error('Workspace identity or repository changed; create a new chat');
+      // A turn arriving during idle deletion must wait for the old pod, then resume its PVC.
+      const deletionDeadline = Date.now() + 60000;
+      while (pod?.metadata.deletionTimestamp) {
+        await new Promise(resolve => setTimeout(resolve, 500));
+        pod = await getPod(name, id);
+        if (pod && pod.metadata.annotations?.['aether.dev/identity'] !== fingerprint) replyError();
+        if (pod?.metadata.deletionTimestamp && Date.now() >= deletionDeadline) throw new Error('Workspace is still stopping');
+      }
       if (!pod) {
-        pod = await call('POST', `${base}/pods`, {apiVersion: 'v1', kind: 'Pod', metadata,
+        pod = await call('POST', `${base}/pods`, {apiVersion: 'v1', kind: 'Pod', metadata: {...metadata,
+          annotations: {...metadata.annotations, [activityAnnotation]: String(now())}},
           spec: {automountServiceAccountToken: false, ...(runtimeClass ? {runtimeClassName: runtimeClass} : {}),
             restartPolicy: 'Always', terminationGracePeriodSeconds: 5, imagePullSecrets,
             securityContext: {runAsNonRoot: false, runAsUser: 0, runAsGroup: 0, fsGroup: user.gid, seccompProfile: {type: 'RuntimeDefault'}},
@@ -97,24 +155,27 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
               volumeMounts: [{name: 'workspace', mountPath: '/workspace'}, {name: 'tmp', mountPath: '/tmp'}]}],
             volumes: [{name: 'workspace', persistentVolumeClaim: {claimName: name}}, {name: 'tmp', emptyDir: {sizeLimit: '1Gi'}}]}});
       }
+      await touch(pod);
       if (remote && status(pod).state === 'ready') {
         const quote = value => "'" + value.replaceAll("'", "'\"'\"'") + "'";
         const result = await call('POST', `${base}/pods/${name}:9006/proxy/operation`, {action: 'exec',
           command: `if [ -d repository/.git ]; then git -C repository remote set-url origin ${quote(remote)}; else git -c credential.helper= -c http.followRedirects=false clone -- ${quote(remote)} repository; fi`});
         if (result.exitCode !== 0 || result.timedOut) throw new Error('Repository checkout failed');
       }
+      await touch(pod);
       return status(pod);
     }
     if (body.action === 'suspend') {
-      gitBroker.revokeWorkspace(id);
-      if (pod) await call('DELETE', `${base}/pods/${name}`, {apiVersion: 'v1', kind: 'DeleteOptions', preconditions: {uid: pod.metadata.uid}});
+      await suspend(id, pod);
       return {state: pod ? 'stopping' : 'suspended'};
     }
     if (!['exec', 'read', 'write', 'list'].includes(body.action)) throw new Error('Unknown operation');
     if (status(pod).state !== 'ready') throw new Error('Workspace not ready');
-    return call('POST', `${base}/pods/${name}:9006/proxy/operation`, body);
+    await touch(pod);
+    try {return await call('POST', `${base}/pods/${name}:9006/proxy/operation`, body);}
+    finally {await touch(pod);}
   };
-  return createServer(async (request, response) => {
+  const server = createServer(async (request, response) => {
     const reply = (statusCode, body) => {response.writeHead(statusCode, {'content-type': 'application/json', 'cache-control': 'no-store'}); response.end(JSON.stringify(body));};
     if (request.url === '/healthz' && request.method === 'GET') return reply(200, {ready: true});
     if (request.headers['x-aether-tenant'] !== tenant) return reply(403, {error: 'Execution access denied'});
@@ -140,6 +201,22 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
     catch {reply(409, {error: 'Execution service operation failed'});}
     finally {locks.delete(match[1]); if (body.action === 'start') provisioning = false;}
   });
+  // Kept off the HTTP API; reconciliation shares operation locks and only deletes owned pods.
+  server.suspendIdleWorkspaces = suspendIdleWorkspaces;
+  let idleTimer;
+  const reconcile = async () => {
+    try {
+      if ((await suspendIdleWorkspaces()).failed) console.error('Idle workspace suspension failed; will retry');
+    } catch {console.error('Idle workspace scan failed; will retry');}
+  };
+  server.on('listening', () => {
+    if (!idleTimeoutSeconds) return;
+    idleTimer = setInterval(reconcile, idleCheckIntervalMs);
+    idleTimer.unref();
+    void reconcile();
+  });
+  server.on('close', () => clearInterval(idleTimer));
+  return server;
 }
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
@@ -149,5 +226,6 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   createManager({gitBroker, imagePullSecrets: JSON.parse(process.env.AETHER_EXECUTION_IMAGE_PULL_SECRETS || '[]'), api, tenant: process.env.AETHER_TENANT_ID, namespace: process.env.AETHER_EXECUTION_NAMESPACE,
     image: process.env.AETHER_EXECUTION_IMAGE, storageClass: process.env.AETHER_EXECUTION_STORAGE_CLASS,
     imagePullPolicy: process.env.AETHER_EXECUTION_PULL_POLICY || 'IfNotPresent',
+    idleTimeoutSeconds: Number(process.env.AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS ?? '1800'),
     runtimeClass: process.env.AETHER_EXECUTION_RUNTIME_CLASS || 'kata'}).listen(9005, '127.0.0.1');
 }

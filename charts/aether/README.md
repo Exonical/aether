@@ -50,3 +50,5 @@ CI lints/packages the chart and checks all 16 adapter combinations, storage, pri
 ## Ask and Agent environments
 
 See the [Ask and Agent guide](../../docs/agent-workspaces.md) for composer controls, the optional `execution.enabled` controller, trusted OIDC UID/GID claims, per-user Git links and retained per-chat runner PVCs. Ask defaults to workerd. Agent uses RHEL 10 and in-container sudo. Execution requires OIDC departments, Cilium network policies, and a configured Kata runtime. Build and publish both execution images before enabling it.
+
+Agent runner pods suspend after 30 idle minutes by default. `execution.idleTimeoutSeconds` accepts 0 (disabled) through 604800 (seven days). Starts and shell/file operations renew the deadline; status polling does not. PVCs survive suspension, and the next Agent turn resumes the workspace. The controller needs namespace-scoped pod list/patch permissions to reconcile activity across restarts.

@@ -49,7 +49,13 @@ test('controller scopes pods, retains PVCs, denies identity forgery and refuses 
   const api = async (method, path, body) => {
     calls.push({method, path, body});
     if (path.includes('/proxy/')) return {status: 200, body: {output: 'fixture', exitCode: 0}};
-    if (path.includes('?')) return {status: 200, body: {items: [...resources.values()].filter(x => x.kind === 'PersistentVolumeClaim')}};
+    if (path.includes('?')) return {status: 200, body: {items: [...resources.values()].filter(x => x.kind === (path.includes('/pods?') ? 'Pod' : 'PersistentVolumeClaim'))}};
+    if (method === 'PATCH') {
+      const object = resources.get(path);
+      assert.equal(body[0].value, object.metadata.uid);
+      object.metadata.annotations['aether.dev/last-activity'] = body[1].value;
+      return {status: 200, body: object};
+    }
     if (method === 'GET') return resources.has(path) ? {status: 200, body: resources.get(path)} : {status: 404, body: {}};
     if (method === 'POST') {
       const object = {...body, metadata: {...body.metadata, uid: 'fixture-uid'}, status: {conditions: [{type: 'Ready', status: 'True'}]}};
