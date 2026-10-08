@@ -431,6 +431,8 @@ export interface AuthenticatedApi extends RpcTarget {
   beginGitOAuth(providerId: string): Promise<import('./execution-workspace').GitOAuthStart>;
   /** Consume the caller's one-use OAuth state and privately store the verified Git grant. */
   completeGitOAuth(state: string, code: string): Promise<import('./execution-workspace').GitConnection>;
+  /** Cancel the caller's pending OAuth link, including a callback still exchanging its code. */
+  cancelGitOAuth(state: string): Promise<void>;
   /** Remove the caller's connection and revoke its outstanding repository leases. */
   removeGitConnection(connectionId: string): Promise<void>;
 

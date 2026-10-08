@@ -9,12 +9,15 @@ declare module 'cloudflare:workers' {
 }
 
 let counter = 0;
-const environment = (calls: {path: string; body: any}[]) => ({
+const environment = (calls: {path: string; body: any}[], beforeExchange?: () => Promise<void>) => ({
   AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
   AETHER_EXECUTION: {fetch: async (url: string, init: RequestInit) => {
     const path = new URL(url).pathname, body = JSON.parse(String(init.body)); calls.push({path, body});
     if (path.endsWith('/begin')) return Response.json({url: `https://git.internal/oauth/authorize?state=${body.state}`, verifier: 'server-only-verifier'});
-    if (path.endsWith('/exchange')) return Response.json({token: 'private-access', refreshToken: 'private-refresh', authentication: 'oauth', expiresAt: Date.now() + 1000});
+    if (path.endsWith('/exchange')) {
+      await beforeExchange?.();
+      return Response.json({token: 'private-access', refreshToken: 'private-refresh', authentication: 'oauth', expiresAt: Date.now() + 1000});
+    }
     if (path.endsWith('/refresh')) return Response.json({token: 'rotated-access', refreshToken: 'rotated-refresh', authentication: 'oauth', expiresAt: Date.now() + 7200000});
     if (path.endsWith('/verify')) return Response.json({login: 'bryce'});
     return Response.json({});
@@ -28,6 +31,7 @@ describe('private, user-owned Git OAuth grants', () => {
     const flow = await runInDurableObject(owner, async (_instance, state) => new GitConnections(state.storage, config).begin('internal'));
     expect(Object.keys(flow).toSorted()).toEqual(['state', 'url']);
     await runInDurableObject(other, async (_instance, state) => {
+      await new GitConnections(state.storage, config).cancel(flow.state);
       await expect(new GitConnections(state.storage, config).complete(flow.state, 'code')).rejects.toThrow(/expired/);
     });
     await runInDurableObject(owner, async (_instance, state) => {
@@ -82,6 +86,23 @@ describe('private, user-owned Git OAuth grants', () => {
       expect((await refresh).token).toBe('rotated-access'); await disconnect; expect((await rejected).message).toMatch(/own linked/);
       expect(calls.find(call => call.path.endsWith('/oauth/revoke'))?.body.token).toBe('rotated-access');
       expect(await git.list()).toEqual([]);
+    });
+  });
+
+  it('cancellation during the token exchange prevents saving the grant and revokes the issued token', async () => {
+    const calls: {path: string; body: any}[] = [];
+    await runInDurableObject(env.TEST_USER.getByName(`git-cancel-${++counter}`), async (_instance, state) => {
+      let enter!: () => void, release!: () => void;
+      const entered = new Promise<void>(resolve => {enter = resolve;});
+      const gate = new Promise<void>(resolve => {release = resolve;});
+      const git = new GitConnections(state.storage, environment(calls, async () => {enter(); await gate;}));
+      const flow = await git.begin('internal');
+      const completion = git.complete(flow.state, 'code').catch(error => error);
+      await entered; await git.cancel(flow.state); release();
+      expect((await completion).message).toMatch(/canceled/);
+      expect(await git.list()).toEqual([]);
+      expect(calls.find(call => call.path.endsWith('/oauth/revoke'))?.body.token).toBe('private-access');
+      await expect(git.complete(flow.state, 'code')).rejects.toThrow(/expired/);
     });
   });
 });

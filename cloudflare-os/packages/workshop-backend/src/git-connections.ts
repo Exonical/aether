@@ -3,7 +3,7 @@ import {executionGit} from './execution-workspace';
 
 type Credential = {token: string; authentication?: 'oauth'; refreshToken?: string; expiresAt?: number};
 type StoredConnection = GitConnection & Credential;
-type PendingOAuth = {providerId: string; verifier: string; expires: number};
+type PendingOAuth = {providerId: string; verifier: string; expires: number; completing?: boolean};
 const connectionsKey = 'aether.git.connections';
 const pendingPrefix = 'aether.git.oauth.';
 
@@ -18,10 +18,15 @@ export class GitConnections {
       .map(({id, providerId, login}) => ({id, providerId, login}));
   }
 
-  private async save(providerId: string, credential: Credential): Promise<GitConnection> {
+  private async save(providerId: string, credential: Credential, state?: string): Promise<GitConnection> {
     const {login} = await executionGit<{login: string}>(this.env, 'verify', {providerId, ...credential});
     const connection = {id: crypto.randomUUID(), providerId, login};
     await this.storage.transaction(async txn => {
+      if (state) {
+        const pending = await txn.get<PendingOAuth>(pendingPrefix + state);
+        if (!pending?.completing || pending.expires <= Date.now()) throw new Error('Git OAuth link canceled or expired');
+        await txn.delete(pendingPrefix + state);
+      }
       const stored = await txn.get<StoredConnection[]>(connectionsKey) ?? [];
       if (stored.length >= 16) throw new Error('Git connection limit reached');
       await txn.put(connectionsKey, [...stored, {...connection, ...credential}]);
@@ -51,17 +56,26 @@ export class GitConnections {
     if (!/^[a-f0-9]{64}$/.test(state) || typeof code !== 'string' || !code || code.length > 4096) throw new Error('Invalid Git OAuth callback');
     const pending = await this.storage.transaction(async txn => {
       const value = await txn.get<PendingOAuth>(pendingPrefix + state);
-      // Consume before the network exchange so concurrent callbacks cannot reuse the code/state.
-      await txn.delete(pendingPrefix + state);
-      if (!value || value.expires <= Date.now()) throw new Error('Git OAuth link expired; connect again');
+      // Claim once before the exchange; keep a cancellable record until the grant commits.
+      if (!value || value.completing || value.expires <= Date.now()) throw new Error('Git OAuth link expired; connect again');
+      await txn.put(pendingPrefix + state, {...value, completing: true});
       return value;
     });
-    const credential = await executionGit<Credential>(this.env, 'oauth/exchange', {...pending, code});
-    try {return await this.save(pending.providerId, credential);}
+    let credential: Credential | undefined;
+    try {
+      credential = await executionGit<Credential>(this.env, 'oauth/exchange', {...pending, code});
+      return await this.save(pending.providerId, credential, state);
+    }
     catch (error) {
-      await executionGit(this.env, 'oauth/revoke', {providerId: pending.providerId, token: credential.token});
+      if (credential) await executionGit(this.env, 'oauth/revoke', {providerId: pending.providerId, token: credential.token});
       throw error;
     }
+    finally {await this.storage.delete(pendingPrefix + state);}
+  }
+
+  async cancel(state: string): Promise<void> {
+    if (!/^[a-f0-9]{64}$/.test(state)) throw new Error('Invalid Git OAuth state');
+    await this.storage.delete(pendingPrefix + state);
   }
 
   private async serialized<T>(id: string, operation: () => Promise<T>): Promise<T> {

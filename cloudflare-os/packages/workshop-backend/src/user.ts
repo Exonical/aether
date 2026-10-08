@@ -671,6 +671,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   linkGitConnection(providerId: string, token: string): Promise<GitConnection> {return this.gitConnections.link(providerId, token);}
   beginGitOAuth(providerId: string): Promise<GitOAuthStart> {return this.gitConnections.begin(providerId);}
   completeGitOAuth(state: string, code: string): Promise<GitConnection> {return this.gitConnections.complete(state, code);}
+  cancelGitOAuth(state: string): Promise<void> {return this.gitConnections.cancel(state);}
   removeGitConnection(connectionId: string): Promise<void> {return this.gitConnections.remove(connectionId);}
 
   /** DO NOT MAKE PUBLIC: contains Git credentials, resolved only from this user's private storage. */

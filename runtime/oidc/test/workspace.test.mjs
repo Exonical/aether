@@ -185,6 +185,7 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     assert.equal(new URL(gitFlow.url).origin,'https://git.internal');
     assert.equal(JSON.stringify(gitFlow).includes('git-oauth-secret'),false);
     assert.deepEqual(Object.keys(gitFlow).toSorted(),['state','url']);
+    await otherUser.cancelGitOAuth(gitFlow.state);
     await assert.rejects(async()=>await otherUser.completeGitOAuth(gitFlow.state,'code'),/expired/i);
     const oauthGit=await user.completeGitOAuth(gitFlow.state,'code');
     await assert.rejects(async()=>await user.completeGitOAuth(gitFlow.state,'code'),/expired/i);
@@ -193,6 +194,9 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     await assert.rejects(async()=>await otherUser.removeGitConnection(oauthGit.id),/No such/i);
     await user.removeGitConnection(oauthGit.id);
     assert.equal(gitOAuthCalls.find(call=>call.path==='/oauth/revoke').form.get('token'),'oauth-access');
+    const canceledFlow=await user.beginGitOAuth('internal');
+    await user.cancelGitOAuth(canceledFlow.state);
+    await assert.rejects(async()=>await user.completeGitOAuth(canceledFlow.state,'code'),/expired/i);
     await assert.rejects(async()=>await otherUser.removeGitConnection(ownGit.id),/No such/i);
     await user.removeGitConnection(ownGit.id);
     assert.deepEqual((await user.getExecutionProfile()).connections,[]);
