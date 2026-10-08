@@ -104,13 +104,23 @@ pod = state(docs)["spec"]["template"]["spec"]
 assert pod["automountServiceAccountToken"] is False
 manager = next(c for c in pod["containers"] if c["name"] == "execution-manager")
 assert manager["securityContext"]["readOnlyRootFilesystem"] is True
+assert {e["name"]: e["value"] for e in manager["env"]}["AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS"] == "1800"
 assert any(m["name"] == "execution-kubernetes" for m in manager["volumeMounts"])
 assert not any(m["name"] == "execution-kubernetes" for c in pod["containers"] if c["name"] != "execution-manager" for m in c.get("volumeMounts", []))
 role = next(d for d in docs if d["kind"] == "Role")
 assert all("secrets" not in r["resources"] and "pods/exec" not in r["resources"] for r in role["rules"])
+assert next(r for r in role["rules"] if r["resources"] == ["pods"])["verbs"] == ["get", "list", "create", "patch", "delete"]
 assert not any(d["kind"] == "ClusterRole" for d in docs)
 render({"tenantId": "acme", "execution": {"enabled": True}}, valid=False)
 print("Execution controller, namespace RBAC, projected credentials and policy checks passed")
+
+for timeout in [0, 300, 604800]:
+    configured = {**execution_values, "execution": {"enabled": True, "idleTimeoutSeconds": timeout}}
+    manager = next(c for c in state(render(configured))["spec"]["template"]["spec"]["containers"] if c["name"] == "execution-manager")
+    assert {e["name"]: e["value"] for e in manager["env"]}["AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS"] == str(timeout)
+for timeout in [-1, 604801, 0.5, "1800", None]:
+    render({**execution_values, "execution": {"enabled": True, "idleTimeoutSeconds": timeout}}, valid=False)
+print("Idle suspension defaults, overrides, disabling and invalid settings passed")
 
 execution_values["execution"]["git"] = {"providers": [{"id": "internal", "label": "Internal GitLab", "kind": "gitlab", "url": "https://git.internal"}], "ca": {"secretName": "git-ca"}}
 docs = render(execution_values)

@@ -153,6 +153,7 @@ spec:
             - {name: AETHER_EXECUTION_PULL_POLICY, value: {{ .Values.execution.runnerImage.pullPolicy | quote }}}
             - {name: AETHER_EXECUTION_RUNTIME_CLASS, value: {{ .Values.execution.runtimeClassName | quote }}}
             - {name: AETHER_EXECUTION_STORAGE_CLASS, value: {{ .Values.execution.storageClassName | quote }}}
+            - {name: AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS, value: {{ .Values.execution.idleTimeoutSeconds | quote }}}
             - {name: AETHER_EXECUTION_IMAGE_PULL_SECRETS, value: {{ .Values.imagePullSecrets | toJson | quote }}}
             - {name: AETHER_EXECUTION_GIT_PROVIDERS, value: {{ .Values.execution.git.providers | toJson | quote }}}
             - {name: AETHER_EXECUTION_GIT_URL, value: {{ printf "http://%s-execution-git.%s.svc:9007/" (include "aether.name" .) .Release.Namespace | quote }}}

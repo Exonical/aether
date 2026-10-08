@@ -13,7 +13,13 @@ export async function createExecutionFixture(root, {gitBroker} = {}) {
       const response = await fetch(`${runner.url}/operation`, {method: 'POST', headers: {'content-type': 'application/json'}, body: JSON.stringify(body)});
       return {status: response.status, body: await response.json()};
     }
-    if (path.includes('?')) return {status: 200, body: {items: [...objects.values()].filter(x => x.kind === 'PersistentVolumeClaim')}};
+    if (path.includes('?')) return {status: 200, body: {items: [...objects.values()].filter(x => x.kind === (path.includes('/pods?') ? 'Pod' : 'PersistentVolumeClaim'))}};
+    if (method === 'PATCH') {
+      const object = objects.get(path);
+      if (!object || object.metadata.uid !== body[0].value) return {status: 409, body: {}};
+      object.metadata.annotations['aether.dev/last-activity'] = body[1].value;
+      return {status: 200, body: object};
+    }
     if (method === 'GET') return objects.has(path) ? {status: 200, body: objects.get(path)} : {status: 404, body: {}};
     if (method === 'POST') {
       const object = {...body, metadata: {...body.metadata, uid: 'fixture-uid'}, status: {conditions: [{type: 'Ready', status: 'True'}]}};

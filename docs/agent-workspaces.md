@@ -76,6 +76,7 @@ execution:
     tag: 0.1.0
   runtimeClassName: kata
   storageClassName: my-csi-class
+  idleTimeoutSeconds: 1800
   git:
     providers:
       - id: internal
@@ -138,6 +139,20 @@ pod and revokes execution access while retaining files. Changing to Ask on the
 next message also suspends it. A provisioned chat's repository or identity cannot
 change; create a new chat for a different checkout.
 
+Runner pods automatically suspend after **30 minutes** without a start/resume or
+shell/file operation. Status polling does not extend the deadline. An in-flight
+controller operation is protected, and its completion starts a fresh idle window.
+The controller checks every minute and once on startup. Activity is persisted as
+a pod annotation, so restarting the application does not reset the deadline;
+older pods without the annotation use their creation time. Idle suspension deletes
+only the owned pod and revokes its Git lease, retaining the PVC. The next Agent
+message or **Start / resume** recreates the pod with the same workspace files.
+Installed packages and files outside `/workspace` are ephemeral across suspension.
+Long model-only thinking periods and background services do not count as workspace
+activity. Set `execution.idleTimeoutSeconds` to `0` to disable automatic suspension,
+or to an integer up to 604800 (seven days). The standalone controller uses
+`AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS` with the same default and range.
+
 The controller permits 32 retained 10 GiB PVCs per installation. Pods request
 250m CPU/256 MiB and have limits of 2 CPU/2 GiB. Deleting an Agent chat or application
 workspace suspends its pods and retains PVCs for operator-controlled retirement.
@@ -150,7 +165,7 @@ the shell's process group are killed at exit. Text operations are limited to
 that isolated container. Dispatched commands can finish after stop/logout or
 membership changes; existing background-agent lifetime rules still apply. There
 is no per-command approval or filesystem rollback. Interactive terminals, Windows,
-Git OAuth, push/MR publication and automatic idle/PVC cleanup remain future work.
+Git OAuth, push/MR publication and automatic PVC cleanup remain future work.
 
 ## Validation
 

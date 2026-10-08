@@ -620,6 +620,7 @@
         "runnerImage",
         "runtimeClassName",
         "storageClassName",
+        "idleTimeoutSeconds",
         "egress"
       ],
       "properties": {
@@ -684,6 +685,11 @@
         },
         "storageClassName": {
           "type": "string"
+        },
+        "idleTimeoutSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 604800
         },
         "egress": {
           "type": "array",
