@@ -101,6 +101,7 @@ describe("ChatComposer", () => {
       undefined,
       undefined,
       undefined,
+      {mode: 'ask', environment: 'rhel10'},
     );
     expect(textarea.disabled).toBe(false);
 
@@ -270,6 +271,7 @@ describe("ChatComposer", () => {
       undefined,
       undefined,
       undefined,
+      {mode: 'ask', environment: 'rhel10'},
     );
   });
 
@@ -306,7 +308,7 @@ describe("ChatComposer", () => {
     expect(document.querySelector('[role="listbox"]')).toBeNull();
     expect(overseer.listSlashCommands).not.toHaveBeenCalled();
     expect(onSend).toHaveBeenCalledWith(
-      "//deploy literally", null, undefined, undefined, undefined,
+      "//deploy literally", null, undefined, undefined, undefined, {mode: "ask", environment: "rhel10"},
     );
   });
 

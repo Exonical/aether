@@ -1,3 +1,4 @@
+import type {ChatExecutionSelection} from '@gadgets/workshop-shared/execution-workspace';
 import { logRpcFailure, rpcFailureDescription } from "./rpcErrors";
 import {
   Fragment,
@@ -4002,6 +4003,7 @@ function ChatInterface({
     capsules?: CapsuleSpecifier[],
     attachments?: ChatAttachmentHandle[],
     formats?: MessageFormatRef[],
+    execution?: ChatExecutionSelection,
   ) => {
     const message = typeof messageText === "string" ? messageText.trim() : messageText ?? "";
     if (!message && (!attachments || attachments.length === 0)) return;
@@ -4013,7 +4015,7 @@ function ChatInterface({
       if (selectedChatId === null) {
         // Create a new chat (with optional capsules).
         const newChatId = await overseer.newChat(
-            message, model, capsules, attachments, formats);
+            message, model, capsules, attachments, formats, execution);
         onNavigateToChatRef.current(newChatId);
       } else {
         // Send message to existing chat.
@@ -4023,7 +4025,7 @@ function ChatInterface({
           model,
           capsules || undefined,
           attachments || undefined,
-          formats,
+          formats, execution,
         );
       }
     } catch (err) {
@@ -6471,7 +6473,8 @@ function ChatInterface({
                 <div className={useConstrainedChatWidth ? "mx-auto w-full max-w-[920px]" : ""}>
                   {/* Remount all transient composer state when the conversation changes. */}
                   <ChatComposer
-                    key={`${workspaceId}:${selectedChatId}`}
+                    key={`${workspaceId}:${selectedChatId}:${JSON.stringify(currentChatMetadata?.execution)}`}
+                    initialExecution={currentChatMetadata?.execution}
                     chatKey={selectedChatId}
                     createCapsuleGatekeeper={(accountId, url) =>
                       overseer.newGatekeeper(accountId, url)

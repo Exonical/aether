@@ -3,7 +3,7 @@ import { CaretDown, Check } from "@phosphor-icons/react";
 import type { AiChatAuthorInfo } from "@gadgets/workshop-shared/api";
 
 /**
- * The composer's model, or null for "No agent". `name` labels it when `models` doesn't offer it,
+ * The composer's model, or null for "No model". `name` labels it when `models` doesn't offer it,
  * such as a hidden model an existing chat last ran on; the raw id is shown when that is absent too.
  */
 export type SelectedModel = { id: string; name?: string } | null;
@@ -20,7 +20,7 @@ export const ComposerModelSelector = ({
   onModelChange,
 }: ComposerModelSelectorProps) => {
   const selectedModelLabel = selectedModel == null
-    ? "No agent"
+    ? "No model"
     : models.find((model) => model.id === selectedModel.id)?.name ??
       selectedModel.name ?? selectedModel.id;
 
