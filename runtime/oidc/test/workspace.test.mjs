@@ -68,10 +68,10 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     const exited=once(child,'exit');child.kill('SIGTERM');await exited;
   }
   t.after(()=>stop());
-  async function start(departmentsEnabled=true) {
+  async function start(departmentsEnabled=true, executionEnabled=true) {
     child=spawn(process.execPath,[join(root,'run-workspace.mjs')], {env:{...process.env,
       AETHER_BIND_ADDRESS:keycloak ? '0.0.0.0':'127.0.0.1',AETHER_TENANT_ID:'acme',AETHER_STATE_DIR:stateDir,AETHER_PORT:'8080',AETHER_PUBLIC_URL:origin,AETHER_OIDC_PORT:String(port),
-      AETHER_EXECUTION_ENABLED:'true',AETHER_DEPARTMENTS:String(departmentsEnabled),AETHER_OIDC_ALLOW_HTTP:'true',AETHER_ADMINS:'["admin@example.com"]'},stdio:['ignore','pipe','pipe']});
+      AETHER_EXECUTION_ENABLED:String(executionEnabled),AETHER_DEPARTMENTS:String(departmentsEnabled),AETHER_OIDC_ALLOW_HTTP:'true',AETHER_ADMINS:'["admin@example.com"]'},stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',v=>logs+=v);child.stderr.on('data',v=>logs+=v);
     for(let i=0;i<200;i++) {
       if(child.exitCode !== null) break;
@@ -138,12 +138,25 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     assert.deepEqual(pod.spec.containers[0].env,[{name:'AETHER_EXECUTION_USERNAME',value:'admin'},{name:'AETHER_EXECUTION_UID',value:'12345'},{name:'AETHER_EXECUTION_GID',value:'23456'}]);
     assert.equal((await operation({action:'exec',command:'git init -q && printf initial > README.md && git add . && git -c user.name=Fixture -c user.email=fixture@example.com commit -qm initial'})).exitCode,0);
     await operation({action:'write',path:'README.md',content:'agent workspace\n'});
+    await assert.rejects(async()=>await workspace.sendChatMessage(agentChat,'Wrong repository',null,undefined,undefined,undefined,
+      {mode:'agent',environment:'rhel10',git:{connectionId:ownGit.id,repository:'team/another'}}),/new chat/i);
     await operation({action:'suspend'});
     await assert.rejects(async()=>await operation({action:'read',path:'README.md'}),/start/i);
     await operation({action:'start'});
     assert.equal((await operation({action:'read',path:'README.md'})).content,'agent workspace\n');
     await workspace.sendChatMessage(agentChat,'Back to chat',null,undefined,undefined,undefined,{mode:'ask',environment:'rhel10'});
     await assert.rejects(async()=>await operation({action:'exec',command:'echo denied'}),/Agent/i);
+    const disabledChat=await workspace.newChat('Agent selected before administrative disable',null,undefined,undefined,undefined,{mode:'agent',environment:'rhel10'});
+    await stop();await start(true,false);
+    Object.assign(admin,await browser());Object.assign(other,await browser());
+    user=await admin.api.authenticate(token);adminApi=await user.getAdminApi();
+    assert.equal((await user.getExecutionProfile()).enabled,false);
+    const callsBeforeAsk=execution.calls.length;
+    await user.openGadget(gadget.id).sendChatMessage(disabledChat,'Ask still works',null,undefined,undefined,undefined,{mode:'ask',environment:'rhel10'});
+    assert.equal(execution.calls.length,callsBeforeAsk,'Ask must not contact Kubernetes when execution is disabled');
+    await stop();await start();
+    Object.assign(admin,await browser());Object.assign(other,await browser());
+    user=await admin.api.authenticate(token);adminApi=await user.getAdminApi();
     assert.equal((await fetch(signed.callback,{headers:{cookie:admin.cookie}})).status,400);
     if(issuer) issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',preferred_username:'other',uidNumber:12346}});
     const signedOther=await login(other,'other');assert.ok(signedOther.outcome.token,logs);

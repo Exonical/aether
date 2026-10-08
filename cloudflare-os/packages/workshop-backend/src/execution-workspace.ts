@@ -10,6 +10,12 @@ export interface ExecutionLaunch {
   git?: {connectionId: string; providerId: string; token: string; repository: string};
 }
 
+/** Stable launch identity for retained storage; deliberately excludes the personal token. */
+export function executionLaunchKey(launch: ExecutionLaunch): string {
+  return JSON.stringify([launch.identity.username, launch.identity.uid, launch.identity.gid,
+    launch.environment, launch.git?.providerId ?? null, launch.git?.repository ?? null]);
+}
+
 /** Normalize untrusted composer settings before storing them. Ask is the default. */
 export function chatExecution(selection?: ChatExecutionSelection): ChatExecutionSelection {
   if (!selection) return {mode: 'ask', environment: 'rhel10'};
