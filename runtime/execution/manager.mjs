@@ -81,7 +81,7 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
             containers: [{name: 'runner', image, imagePullPolicy,
               securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ['ALL']}},
               resources: {requests: {cpu: '250m', memory: '256Mi'}, limits: {cpu: '2', memory: '2Gi'}},
-              readinessProbe: {httpGet: {path: '/healthz', port: 9006}, periodSeconds: 2},
+              readinessProbe: {exec: {command: ['node', '-e', "fetch('http://127.0.0.1:9006/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]}, periodSeconds: 5},
               volumeMounts: [{name: 'workspace', mountPath: '/workspace'}, {name: 'tmp', mountPath: '/tmp'}]}],
             volumes: [{name: 'workspace', persistentVolumeClaim: {claimName: name}}, {name: 'tmp', emptyDir: {sizeLimit: '1Gi'}}]}});
       }

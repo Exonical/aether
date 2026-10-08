@@ -68,6 +68,7 @@ test('controller scopes pods, retains PVCs, denies identity forgery and refuses 
     assert.equal((await operation('start')).status, 200);
     const pod = calls.find(x => x.body?.kind === 'Pod').body;
     assert.equal(pod.spec.containers[0].imagePullPolicy, 'Always');
+    assert.ok(pod.spec.containers[0].readinessProbe.exec.command.join(' ').includes('127.0.0.1:9006/healthz'));
     assert.equal(pod.spec.automountServiceAccountToken, false); assert.equal(pod.spec.runtimeClassName, 'kata');
     assert.equal(pod.spec.containers[0].securityContext.readOnlyRootFilesystem, true);
     assert.equal(pod.spec.containers[0].env, undefined);
