@@ -1,0 +1,13 @@
+// Generated from cloudflare.config.ts by scripts/generate-worker-configs.ts -- do not edit.
+// Change cloudflare.config.ts and run `pnpm configs:generate`.
+{
+  "name": "dev-router",
+  "main": "packages/router/src/index.ts",
+  "compatibility_date": "2026-09-04",
+  "services": [
+    {
+      "binding": "WORKSHOP_BACKEND",
+      "service": "workshop-backend"
+    }
+  ]
+}

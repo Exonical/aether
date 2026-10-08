@@ -187,7 +187,7 @@ The starter enables structured custom logs and a private console-backed Error Re
 
 ## Custom Gatekeepers
 
-Keep deployment-owned Gatekeepers under `packages/`, outside the `cloudflare-os` submodule. `scripts/deploy.ts` binds this repository's example as `GATEKEEPER_CUSTOM` and Context as `GATEKEEPER_CONTEXT`, twice each: on the Workshop with the `GatekeeperVendor` entrypoint for RPC, and on the router with no entrypoint, where the binding name is what routes `/gatekeeper/custom` and `/gatekeeper/context` to it. A Gatekeeper that serves HTTP — an OAuth redirect, for instance — needs both.
+Keep deployment-owned Gatekeepers under `packages/`, alongside the `cloudflare-os` fork. `scripts/deploy.ts` binds this repository's example as `GATEKEEPER_CUSTOM` and Context as `GATEKEEPER_CONTEXT`, twice each: on the Workshop with the `GatekeeperVendor` entrypoint for RPC, and on the router with no entrypoint, where the binding name is what routes `/gatekeeper/custom` and `/gatekeeper/context` to it. A Gatekeeper that serves HTTP — an OAuth redirect, for instance — needs both.
 
 The minimal example flow is:
 
@@ -202,16 +202,16 @@ Read the [package guide](../packages/custom-gatekeeper/README.md) and upstream [
 
 ## Code extensions
 
-Prefer wrapper-owned Workers and [service bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/) over patches inside the submodule. Modify upstream only when a Worker boundary cannot express the behavior, and keep the change as a reviewable upstream commit or fork rather than a generated overlay.
+Use service bindings for deployment integrations. Aether owns the source under `cloudflare-os/`, so product changes can modify the frontend, agent runtime and shared API directly. Keep backend/API changes small and reviewable, separate from UI changes where possible. Existing standalone runtime bundle patches remain in place; migrate them to source changes in separately validated commits.
 
 ## Upgrade
 
-1. Record the current `cloudflare-os` gitlink for rollback.
-2. Update the submodule to the intended upstream commit.
+1. Record the current Aether commit for rollback and read [source provenance](../cloudflare-os/UPSTREAM.md).
+2. Import selected upstream changes into a feature branch, preserving Aether modifications. Update the provenance record when advancing the import baseline.
 3. Review Workshop and Context Wrangler base-config changes and Gatekeeper contracts.
-4. Diff `cloudflare-os/pnpm-workspace.yaml`'s `catalog:` against this repository's and re-sync it. Two submodule packages are members of this workspace and resolve `catalog:` here, so a missing entry fails the install and a *stale* one silently gives the tree two copies of `capnweb` — a failure that only appears once the two installs are separate, as they are in CI.
-5. Run `pnpm install`, `pnpm --dir cloudflare-os install`, `pnpm lint`, and `pnpm check`.
-6. Deploy and verify Access, administrator access, storage, configured AI, Context, custom observations, and the Error Reporter query surface.
-7. If needed, restore the previous gitlink and redeploy, or use [Workers rollback](https://developers.cloudflare.com/workers/versions-and-deployments/rollbacks/) when bindings remain compatible.
+4. Diff `cloudflare-os/pnpm-workspace.yaml`'s `catalog:` against this repository's and re-sync it. Shared fork packages resolve `catalog:` here, so missing or stale entries can break installs or produce incompatible copies of `capnweb`.
+5. Run root and fork frozen installs, appropriate type checks and tests, and the standalone workspace integration suite. CI also verifies saved state across the previous artifact's upgrade.
+6. Verify administrator access, configured models, OIDC, department sharing, storage and custom integrations.
+7. If needed, restore the previous Aether source commit and redeploy with compatible bindings and state.
 
-Do not update the submodule blindly. The deployment script derives from upstream configs so incompatible base changes remain visible during review and checks.
+Upstream updates are reviewed source changes, not automatic synchronization. The deployment script derives from the fork's configs so incompatible base changes remain visible during review and checks.

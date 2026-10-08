@@ -7,13 +7,13 @@ const root = dirname(dirname(fileURLToPath(import.meta.url)));
 const upstream = join(root, "cloudflare-os");
 const entrypoint = join(upstream, "scripts/run-local.ts");
 if (!existsSync(entrypoint)) {
-  console.error("Initialize the pinned upstream first: git submodule update --init");
+  console.error("Missing cloudflare-os source. Restore it from a complete Aether checkout.");
   process.exit(1);
 }
 const child = spawn(process.execPath, [entrypoint, ...process.argv.slice(2)], {
   cwd: upstream,
   stdio: "inherit",
-  // Aether validates its newer pnpm against the unchanged upstream workspace.
+  // Aether validates its newer pnpm against the fork workspace.
   env: { ...process.env, pnpm_config_pm_on_fail: "ignore" },
   // Upstream owns signal forwarding to its server process tree.
   detached: process.platform !== "win32",

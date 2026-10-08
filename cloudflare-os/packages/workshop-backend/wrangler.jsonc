@@ -1,0 +1,78 @@
+// Generated from cloudflare.config.ts by scripts/generate-worker-configs.ts -- do not edit.
+// Change cloudflare.config.ts and run `pnpm configs:generate`.
+{
+  "name": "workshop-backend",
+  "main": ".wrangler/validate/src/server.ts",
+  "compatibility_date": "2026-09-04",
+  "compatibility_flags": [
+    "allow_irrevocable_stub_storage",
+    "global_fetch_strictly_public",
+    "nodejs_compat"
+  ],
+  "observability": {
+    "enabled": true,
+    "head_sampling_rate": 1,
+    "logs": {
+      "invocation_logs": false
+    },
+    "traces": {
+      "enabled": true,
+      "head_sampling_rate": 0.5
+    }
+  },
+  "browser": {
+    "binding": "BROWSER"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "BLUEPRINTS",
+      "preview_id": "gadgets-blueprint-metadata"
+    },
+    {
+      "binding": "AVATARS",
+      "preview_id": "gadgets-avatars"
+    }
+  ],
+  "r2_buckets": [
+    {
+      "binding": "BLUEPRINT_CONTENT",
+      "bucket_name": "gadgets-blueprint-content"
+    }
+  ],
+  "worker_loaders": [
+    {
+      "binding": "LOADER"
+    }
+  ],
+  "build": {
+    "command": "pnpm run build:worker",
+    "watch_dir": "src"
+  },
+  "migrations": [
+    {
+      "tag": "v0",
+      "new_sqlite_classes": [
+        "UserDurableObject",
+        "OverseerDurableObject"
+      ]
+    },
+    {
+      "tag": "v1",
+      "new_sqlite_classes": [
+        "AdminSettings"
+      ]
+    },
+    {
+      "tag": "v2",
+      "new_sqlite_classes": [
+        "PendingLogin"
+      ]
+    },
+    {
+      "tag": "v3",
+      "new_sqlite_classes": [
+        "UserDirectoryDurableObject"
+      ]
+    }
+  ]
+}

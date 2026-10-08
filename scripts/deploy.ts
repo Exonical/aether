@@ -565,8 +565,8 @@ export function generateConfigs(config: DeploymentConfig, bases: BaseConfigs): G
 // `--no-cache` goes before the task name. Everything after it is `[ADDITIONAL_ARGS]`, forwarded to
 // the task's own command -- `vp run -F x build --no-cache` reaches `tsc` as an unknown option.
 
-/** `vp run --no-cache <task>` for a package in the submodule's workspace. */
-function submoduleBuild(pkg: string, task = "build"): string[] {
+/** `vp run --no-cache <task>` for a package in the fork's workspace. */
+function forkBuild(pkg: string, task = "build"): string[] {
   return ["--dir", "cloudflare-os", "exec", "vp", "run", "-F", pkg, "--no-cache", task];
 }
 
@@ -579,7 +579,7 @@ function ownBuild(pkg: string, task = "build"): string[] {
  * The build steps `pnpm check` and `pnpm deploy` run, in order, from the repository root.
  *
  * Every one goes through `vp run` rather than `pnpm --filter <pkg> build`. Two of the three
- * submodule targets have no `build` *script* at all any more -- they have a Vite+ *task*, which
+ * fork targets have no `build` *script* at all any more -- they have a Vite+ *task*, which
  * `pnpm --filter` cannot see -- and `vp run` runs scripts and tasks alike, so one form covers both.
  *
  * `--no-cache` on every one. A cache hit is only as good as its fingerprint, which is cheap to get
@@ -599,18 +599,18 @@ export function buildCommands(config: DeploymentConfig): BuildCommand[] {
     // nested invocation carrying its own flag -- measured: the configurator app replayed from
     // cache. Rebuilding it here from source is what upstream's own `deploy` script does; the
     // `build` step below then type-checks and replays the bytes this step just wrote.
-    { args: submoduleBuild("@gadgets/gatekeeper-context", "build:app") },
-    { args: submoduleBuild("@gadgets/gatekeeper-context") },
+    { args: forkBuild("@gadgets/gatekeeper-context", "build:app") },
+    { args: forkBuild("@gadgets/gatekeeper-context") },
     // The Scheduler's `build` nests the same cached `vp run build:app`, so it needs the same pair.
-    { args: submoduleBuild("@gadgets/gatekeeper-scheduler", "build:app") },
-    { args: submoduleBuild("@gadgets/gatekeeper-scheduler") },
+    { args: forkBuild("@gadgets/gatekeeper-scheduler", "build:app") },
+    { args: forkBuild("@gadgets/gatekeeper-scheduler") },
     { args: ownBuild("custom-gatekeeper") },
     ...(config.errorReporting.enabled ? [{ args: ownBuild("error-reporter") }] : []),
     // Access mode is a build-time constant in the frontend bundle (`src/useAuth.ts`), so it is set
     // here rather than inherited: a bundle built under a different value is wrong, not just stale.
-    { args: submoduleBuild("@gadgets/workshop-frontend"), env: { VITE_CF_ACCESS_MODE: "true" } },
-    { args: submoduleBuild("@gadgets/router") },
-    { args: submoduleBuild("@gadgets/workshop-backend") },
+    { args: forkBuild("@gadgets/workshop-frontend"), env: { VITE_CF_ACCESS_MODE: "true" } },
+    { args: forkBuild("@gadgets/router") },
+    { args: forkBuild("@gadgets/workshop-backend") },
   ];
 }
 
@@ -678,9 +678,9 @@ function deployWorker(dir: string, extraArgs: string[]): void {
   }
 }
 
-function requireSubmodule(): void {
+function requireFork(): void {
   if (!existsSync(join(root, "cloudflare-os/package.json"))) {
-    throw new Error("CloudflareOS submodule is not initialized. Run git submodule update --init.");
+    throw new Error("Cloudflare OS fork source is missing. Restore cloudflare-os from a complete Aether checkout.");
   }
 }
 
@@ -712,7 +712,7 @@ function reportAiGateway(config: DeploymentConfig): void {
 }
 
 async function main(): Promise<void> {
-  requireSubmodule();
+  requireFork();
   const config = await readDeployment(join(root, "deployment.jsonc"));
   const generated = generateConfigs(config, {
     router: await readJsonc(join(root, packageDirs.router, "wrangler.jsonc")),
