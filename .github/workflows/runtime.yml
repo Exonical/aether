@@ -95,10 +95,10 @@ jobs:
       - run: pnpm --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
       - name: Build the previous main artifact for storage upgrade verification
         run: |
-          mkdir -p /tmp/aether-baseline
           baseline_sha="$BASE_SHA"
           if ! git cat-file -e "$baseline_sha^{commit}" 2>/dev/null; then baseline_sha=origin/main; fi
-          git archive "$baseline_sha" runtime cloudflare-os | tar -x -C /tmp/aether-baseline
+          # Keep Git provenance available for builds from the editable source fork.
+          git worktree add --detach /tmp/aether-baseline "$baseline_sha"
           # Historical revisions used a gitlink; newer revisions contain the fork's source.
           if [ "$(git ls-tree "$baseline_sha" cloudflare-os | awk '{print $1}')" = 160000 ]; then
             baseline_upstream_sha=$(git ls-tree "$baseline_sha" cloudflare-os | awk '{print $3}')
