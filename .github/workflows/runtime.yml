@@ -62,6 +62,7 @@ jobs:
       - run: pnpm run types:scripts
       - run: pnpm --filter custom-gatekeeper test:run
       - run: pnpm --filter error-reporter test:run
+      - run: pnpm --filter @gadgets/error-reporting test:run
   workspace:
     runs-on: ubuntu-24.04
     services:

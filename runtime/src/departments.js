@@ -4,7 +4,7 @@ const validId = value => typeof value === 'string' && /^[a-z0-9][a-z0-9-]{0,62}$
 const validEmail = value => typeof value === 'string' && value.length <= 254 && /^[^\s:@]+@[^\s:@]+$/.test(value);
 const fail = () => {throw new Error('Department operation denied');};
 
-/** Private directory capability, bound only to the trusted OIDC session registry. */
+/** Private directory capability, bound only to the trusted backend and OIDC registry. */
 export class DepartmentDirectory extends WorkerEntrypoint {
   syncLogin(email, departmentIds) {return this.ctx.exports.Departments.getByName('directory').syncLogin(email, departmentIds);}
   accessVersion() {return this.ctx.exports.Departments.getByName('directory').accessVersion();}
