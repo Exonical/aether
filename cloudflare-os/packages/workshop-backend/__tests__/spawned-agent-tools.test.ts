@@ -98,6 +98,37 @@ function toolCalls(impl: any, chatId: number): AiToolCall[] {
       .flatMap(msg => msg.type === "message" ? msg.toolCalls ?? [] : []);
 }
 
+describe('owner-authorized Linux workspace tools', () => {
+  it('offers and executes the real agent tool only for an enabled owner-initiated turn', async () => {
+    await withImpl(async impl => {
+      const chatId = 1;
+      impl.storage.chatMeta.put({id: chatId, title: 'Linux task', started: new Date(), lastActive: new Date()});
+      impl.storage.chats.put({chatId, sequence: impl.nextChatSequence(chatId), timestamp: new Date(),
+        author: OWNER, type: 'message', message: 'Run the repository tests.'});
+      const calls: any[] = [];
+      impl.env = {...impl.env, AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
+        AETHER_EXECUTION: {fetch: async (_url: string, init: RequestInit) => {
+          calls.push(JSON.parse(init.body as string)); return Response.json({output: 'tests passed', exitCode: 0});
+        }}};
+      await impl.ctx.storage.put('aether.execution.enabled', true);
+      impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
+      const offered = await runScriptedTurn(impl, chatId, [
+        fauxAssistantMessage([fauxToolCall('workspace', {action: 'exec', command: 'npm test'})]),
+        fauxAssistantMessage([fauxText('Done')]),
+      ]);
+      expect(offered[0]).toContain('workspace');
+      expect(calls).toEqual([{action: 'exec', command: 'npm test'}]);
+      expect(toolCalls(impl, chatId).find(call => call.toolName === 'workspace')?.output).toContain('tests passed');
+      impl.storage.activeAgents.put({chatId, initiatorUserId: 'collaborator', modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
+      expect(await impl.executionWorkspaceEnabled(chatId)).toBe(false);
+      await expect(impl.agentWorkspaceOperation(chatId, {action: 'exec', command: 'denied'})).rejects.toThrow('Owner-started');
+      await impl.ctx.storage.put('aether.execution.enabled', false);
+      impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
+      expect(await impl.executionWorkspaceEnabled(chatId)).toBe(false);
+    });
+  });
+});
+
 describe("spawned agent tools", () => {
   it("offers file and worktree tools, but nothing that modifies gadgets or requests connections",
       () => withImpl(async impl => {

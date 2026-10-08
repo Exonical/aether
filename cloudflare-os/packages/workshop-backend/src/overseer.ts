@@ -1,3 +1,5 @@
+import {executeWorkspace} from './execution-workspace';
+import type {ExecutionOperation, ExecutionResult} from '@gadgets/workshop-shared/execution-workspace';
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionLogEntry, ActionsSubscriber, ActionHistoryFilter, ActionHistoryPage, ChatGadgetPinRecord, MainlineMergeGadget, ChatCodeBase, ChatGadgetPinState, CodeChangeSubmission, CommitInfo, FileAtCommit, MAX_READ_FILES_PER_CALL, TreeNode, MergeChangesResult, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, BlueprintMerge, ApplyBlueprintResult, GadgetUpstream, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
@@ -2427,6 +2429,24 @@ class OverseerImpl implements AgentHooks {
       env[name] = this.makeBindingLoopback({type: "gatekeeper", id: edge.target}, caller);
     }
     return env;
+  }
+
+  async executionWorkspaceEnabled(chatId: number): Promise<boolean> {
+    return this.env.AETHER_EXECUTION_ENABLED === 'true'
+      && await this.ctx.storage.get<boolean>('aether.execution.enabled') === true
+      && this.storage.activeAgents.get(chatId)?.initiatorUserId === this.ownerId;
+  }
+
+  async agentWorkspaceOperation(chatId: number, operation: ExecutionOperation): Promise<ExecutionResult> {
+    if (!await this.executionWorkspaceEnabled(chatId) || ['start', 'suspend'].includes(operation.action)) {
+      throw new Error('Owner-started Linux workspace required');
+    }
+    const result = await executeWorkspace(this.env, this.ctx.id.toString(), operation);
+    if (['read', 'list', 'exec'].includes(operation.action)) {
+      await this.recordAgentObservation(chatId, 'Linux workspace', undefined,
+          {title: `Workspace ${operation.action}`, description: 'Read bounded Linux workspace output.'});
+    }
+    return result;
   }
 
   // Build the agent's executeCode env from the chat's binding map: each name resolves to a
@@ -10250,6 +10270,18 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     return profilePromise;
   }
 
+  async executionWorkspace(operation: ExecutionOperation): Promise<ExecutionResult> {
+    if (!this.isOwner) throw new Error('Only the owner can control the Linux workspace');
+    if (operation.action === 'suspend') await this.impl.ctx.storage.put('aether.execution.enabled', false);
+    if (!['start', 'status', 'suspend'].includes(operation.action)
+        && !await this.impl.ctx.storage.get<boolean>('aether.execution.enabled')) {
+      throw new Error('Start the Linux workspace first');
+    }
+    const result = await executeWorkspace(this.impl.env, this.impl.ctx.id.toString(), operation);
+    if (operation.action === 'start') await this.impl.ctx.storage.put('aether.execution.enabled', true);
+    return result;
+  }
+
   async getMetadata(): Promise<GadgetMetadata> {
     let result: GadgetMetadata = {
       id: this.impl.ctx.id.toString(),
@@ -10441,6 +10473,10 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   async deleteSelf(): Promise<void> {
     if (!this.isOwner) {
       throw new Error("Only the workspace owner can delete it.");
+    }
+    if (this.impl.env.AETHER_EXECUTION_ENABLED === 'true'
+        && await this.impl.ctx.storage.get<boolean>('aether.execution.enabled')) {
+      await this.executionWorkspace({action: 'suspend'});
     }
     let startedAt = Date.now();
 
@@ -11785,6 +11821,10 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 // whether "use" callers may invoke it.
 @validateRpc()
 class UseOverseerInterface extends RpcTarget implements Overseer {
+  executionWorkspace(_operation: ExecutionOperation): Promise<ExecutionResult> {
+    throw new Error('Only the owner can control the Linux workspace');
+  }
+
   constructor(private impl: OverseerImpl,
               private clientProfileId: string,
               private clientUserId: string,

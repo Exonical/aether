@@ -77,6 +77,13 @@ declare global {
       // Public base URL of the deployment.
       PUBLIC_BASE_URL?: string;
 
+      /** Private, operator-configured Linux workspace controller. Never bound to Gadget code. */
+      AETHER_EXECUTION?: Fetcher;
+      /** Explicit installation-wide enablement. */
+      AETHER_EXECUTION_ENABLED?: string;
+      /** Stable installation identity attached by the native runtime artifact. */
+      AETHER_EXECUTION_TENANT?: string;
+
       // Daily free-tier LLM-call limit (per user). Defaults to DEFAULT_DAILY_LLM_CALL_LIMIT.
       DAILY_LLM_CALL_LIMIT?: string;
 

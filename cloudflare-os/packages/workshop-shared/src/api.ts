@@ -2327,6 +2327,9 @@ export type AgentSpawnerConfig = {
  * createGadget()/getGadget()).
  */
 export interface Overseer extends RpcTarget {
+  /** Owner-only Linux workspace lifecycle, command and file access. Starting grants agents access. */
+  executionWorkspace(operation: import('./execution-workspace').ExecutionOperation): Promise<import('./execution-workspace').ExecutionResult>;
+
   /** Get metadata describing this workspace. */
   getMetadata(): Promise<GadgetMetadata>;
 
