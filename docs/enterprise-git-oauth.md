@@ -103,6 +103,13 @@ and optional `NODE_EXTRA_CA_CERTS`.
 
 Choose **Agent → Connect Git**, select an internal service and click **Connect**.
 Authorize your own account in the popup; the parent chat and draft remain open.
+If you close the popup or change your mind, use **Cancel authorization** in the
+parent dialog. Enterprise browser-isolation headers can detach the popup's
+window handle, so a closed-looking handle does not automatically cancel the link;
+abandoned links expire after ten minutes. Cancellation removes the user-bound
+pending state; a callback still exchanging its code cannot commit a canceled
+grant, and any newly issued token is revoked. A link already committed before
+cancellation can be removed with **Disconnect**.
 After authorization, choose the linked account and enter `group/project` or
 `owner/repository`. Repositories still use the selected service's default branch;
 repository/branch discovery and explicit branch selection are separate work.

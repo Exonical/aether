@@ -17,8 +17,9 @@ const fixture = () => {
   const popup = {closed: false, opener: window, close, sessionStorage: {setItem}, location: {replace}};
   vi.spyOn(window, 'open').mockReturnValue(popup as unknown as Window);
   const beginGitOAuth = vi.fn<(providerId: string) => Promise<GitOAuthStart>>(async () => ({url: 'https://git.internal/oauth/authorize', state: 'a'.repeat(64)}));
-  const api = {beginGitOAuth} as unknown as RpcStub<AuthenticatedApi>;
-  return {popup, beginGitOAuth, api, close, channelClose, setItem, replace, deliver: (data: unknown) => receive!({data})};
+  const cancelGitOAuth = vi.fn<(state: string) => Promise<void>>(async () => {});
+  const api = {beginGitOAuth, cancelGitOAuth} as unknown as RpcStub<AuthenticatedApi>;
+  return {popup, beginGitOAuth, cancelGitOAuth, api, close, channelClose, setItem, replace, deliver: (data: unknown) => receive!({data})};
 };
 
 it('opens from the click, removes the opener and returns only an account identifier over a state-scoped channel', async () => {
@@ -33,15 +34,15 @@ it('opens from the click, removes the opener and returns only an account identif
   expect(f.channelClose).toHaveBeenCalled(); expect(f.close).toHaveBeenCalled();
 });
 
-it('refuses blocked popups and clears the handoff when the user closes it', async () => {
+it('refuses blocked popups and expires abandoned handoffs', async () => {
   const f = fixture(); vi.spyOn(window, 'open').mockReturnValueOnce(null);
   expect(() => openGitOAuth(f.api, 'internal')).toThrow(/popups/);
   expect(f.beginGitOAuth).not.toHaveBeenCalled();
   vi.useFakeTimers();
   const flow = openGitOAuth(f.api, 'internal');
   const rejected = flow.finished.catch(error => error);
-  await Promise.resolve(); f.popup.closed = true; await vi.advanceTimersByTimeAsync(500);
-  expect((await rejected).message).toMatch(/closed/); expect(f.channelClose).toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
+  await Promise.resolve(); await vi.advanceTimersByTimeAsync(600000);
+  expect((await rejected).message).toMatch(/timed out/); expect(f.channelClose).toHaveBeenCalled(); expect(vi.getTimerCount()).toBe(0);
 });
 
 it('cancellation while the start RPC is pending prevents later navigation', async () => {
@@ -49,7 +50,19 @@ it('cancellation while the start RPC is pending prevents later navigation', asyn
   let release!: (value: {url: string; state: string}) => void;
   f.beginGitOAuth.mockImplementation(() => new Promise(resolve => {release = resolve;}));
   const flow = openGitOAuth(f.api, 'internal');
-  const rejected = flow.finished.catch(error => error); flow.cancel(); expect((await rejected).message).toMatch(/closed/);
+  const rejected = flow.finished.catch(error => error); flow.cancel(); expect((await rejected).message).toMatch(/canceled/);
   release({url: 'https://git.internal/oauth/authorize', state: 'a'.repeat(64)});
   await Promise.resolve(); expect(f.replace).not.toHaveBeenCalled();
+  expect(f.cancelGitOAuth).toHaveBeenCalledWith('a'.repeat(64));
+});
+
+it('keeps the callback channel alive when an enterprise COOP policy severs the window handle', async () => {
+  vi.useFakeTimers();
+  const f = fixture(), flow = openGitOAuth(f.api, 'internal');
+  await Promise.resolve(); f.popup.closed = true;
+  await vi.advanceTimersByTimeAsync(10000);
+  expect(f.channelClose).not.toHaveBeenCalled();
+  f.deliver({connectionId: 'own-account'});
+  await expect(flow.finished).resolves.toBe('own-account');
+  expect(vi.getTimerCount()).toBe(0);
 });

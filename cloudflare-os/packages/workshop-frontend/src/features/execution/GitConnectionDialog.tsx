@@ -62,11 +62,14 @@ export const GitConnectionDialog = ({api, profile, selection, onProfileChange, o
             {provider.kind === 'github' && <p className="text-xs text-kumo-subtle">GitHub Enterprise OAuth grants the repo scope. Aether's environment broker permits repository reads only.</p>}
             <Button type="button" disabled={busy} onClick={() => void perform(async () => {
               oauth.current = openGitOAuth(api, providerId);
-              const linkedId = await oauth.current.finished;
+              let linkedId: string;
+              try {linkedId = await oauth.current.finished;}
+              finally {oauth.current = null;}
               const updated = await api.getExecutionProfile();
               if (!mounted.current) return;
               onProfileChange(updated); setConnectionId(linkedId);
             })}>Connect {provider.label}</Button>
+            {busy && oauth.current && <Button type="button" onClick={() => oauth.current?.cancel()}>Cancel authorization</Button>}
           </> : <>
           <Input label="Personal access token" type="password" autoComplete="off" value={token} disabled={busy} onChange={event => setToken(event.target.value)} />
           <p className="text-xs text-kumo-subtle">Use a token limited to reading your repositories and identifying your account. It is stored privately and kept out of the environment.</p>
