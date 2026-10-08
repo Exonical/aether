@@ -16,7 +16,7 @@ export default {
     if (env.OIDC_PUBLIC_URL) {
       const publicUrl = new URL(env.OIDC_PUBLIC_URL);
       const url = new URL(request.url);
-      if (url.host !== publicUrl.host) return new Response('Invalid host', {status:400});
+      if (url.host !== publicUrl.host && pathname !== '/gatekeeper/oidc/backchannel-logout') return new Response('Invalid host', {status:400});
       if (pathname === '/api' || pathname.startsWith('/api/')) {
         if (!browserCookie(request, publicUrl.href) || request.headers.get('origin') !== publicUrl.origin
             || request.headers.get('sec-fetch-site') === 'cross-site') return new Response('Same-origin browser required', {status:403});

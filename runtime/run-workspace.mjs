@@ -28,10 +28,12 @@ if (manifest.oidc) {
 }
 const state = resolve(process.env.AETHER_STATE_DIR || join(root, ".workspace-state"));
 const port = process.env.AETHER_PORT || "8080";
+const bindAddress=process.env.AETHER_BIND_ADDRESS || "127.0.0.1";
+if (!["127.0.0.1", "0.0.0.0"].includes(bindAddress)) throw new Error("Invalid AETHER_BIND_ADDRESS");
 if (!/^\d+$/.test(port) || Number(port) < 1 || Number(port) > 65535) throw new Error("Invalid AETHER_PORT");
 const file = kvStorage === "postgres" ? (storage === "s3" ? "workspace-postgres-s3.capnp.bin" : "workspace-postgres.capnp.bin")
   : (storage === "s3" ? "workspace-s3.capnp.bin" : "workspace.capnp.bin");
-const args = ["serve", join(output, file), "--binary", "--experimental", `--socket-addr=http=127.0.0.1:${port}`,
+const args = ["serve", join(output, file), "--binary", "--experimental", `--socket-addr=http=${bindAddress}:${port}`,
   `--directory-path=aether:assets-disk=${join(output, "assets")}`];
 if (storage === "s3") args.push(`--external-addr=aether:s3-endpoint=127.0.0.1:${process.env.AETHER_S3_PORT || "9001"}`);
 if (kvStorage === "postgres") args.push(`--external-addr=aether:postgres-endpoint=127.0.0.1:${process.env.AETHER_PG_ADAPTER_PORT || "9002"}`);

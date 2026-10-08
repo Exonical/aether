@@ -163,7 +163,14 @@ jobs:
           AETHER_BUILD_DIR: /tmp/aether-oidc-workspace
       - name: Start Keycloak with a synthetic tenant realm
         run: |
-          docker run -d --name keycloak -p 127.0.0.1:8180:8080 -e KC_HOSTNAME=http://127.0.0.1:8180 -v "$PWD/runtime/oidc/test/keycloak-realm.json:/opt/keycloak/data/import/aether.json:ro" quay.io/keycloak/keycloak:26.7.5 start-dev --import-realm
+          mkdir -p /tmp/keycloak-import
+          python3 - <<'PYREALM'
+          import json
+          realm=json.load(open('runtime/oidc/test/keycloak-realm.json'))
+          realm['clients'][0]['attributes']['backchannel.logout.url']='http://127.0.0.1:8080/gatekeeper/oidc/backchannel-logout'
+          json.dump(realm,open('/tmp/keycloak-import/aether.json','w'))
+          PYREALM
+          docker run -d --name keycloak --network host -e KC_HOSTNAME=http://127.0.0.1:8180 -e KC_BOOTSTRAP_ADMIN_USERNAME=aether-admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=fixture-admin-secret -v "/tmp/keycloak-import/aether.json:/opt/keycloak/data/import/aether.json:ro" quay.io/keycloak/keycloak:26.7.5 start-dev --http-port=8180 --import-realm
           for attempt in $(seq 1 90); do
             if curl --fail --silent http://127.0.0.1:8180/realms/aether/.well-known/openid-configuration > /dev/null; then exit 0; fi
             sleep 1

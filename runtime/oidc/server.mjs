@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
 import { Agent, fetch as oidcFetch } from 'undici';
 import * as oidc from 'openid-client';
+import {createRemoteJWKSet, jwtVerify, customFetch} from 'jose';
 import { readConfig } from './config.mjs';
 
 const STATE = /^[a-f0-9]{64}\.[A-Za-z0-9_-]{43}$/;
@@ -34,6 +35,7 @@ export async function createAdapter(config) {
       if (key !== 'authorization_endpoint') allowed.add(url.href);
     }
   } catch (error) { await agent.close(); throw error; }
+  const jwks = createRemoteJWKSet(new URL(client.serverMetadata().jwks_uri), {[customFetch]:safeFetch, timeoutDuration:10000});
   const pending = new Map();
   let active = 0;
   const cleanup = setInterval(() => {
@@ -42,7 +44,7 @@ export async function createAdapter(config) {
   const server = createServer(async (req, res) => {
     const reply = (status, data) => { req.resume(); res.writeHead(status, {'content-type':'application/json', 'cache-control':'no-store'}); res.end(JSON.stringify(data)); };
     if (req.method === 'GET' && ['/healthz', '/readyz'].includes(req.url)) return reply(200, {status:'ready'});
-    if (req.method !== 'POST' || !['/begin', '/complete'].includes(req.url)) return reply(404, {error:'Not found'});
+    if (req.method !== 'POST' || !['/begin', '/complete', '/verify-logout'].includes(req.url)) return reply(404, {error:'Not found'});
     if (req.headers['x-aether-oidc-tenant'] !== config.tenantId) return reply(403, {error:'Tenant denied'});
     if (!/^application\/json(?:\s*;|$)/i.test(req.headers['content-type'] || '')) return reply(415, {error:'JSON required'});
     if (active >= 8) return reply(429, {error:'Login concurrency limit'});
@@ -51,10 +53,24 @@ export async function createAdapter(config) {
       const chunks = []; let size = 0;
       for await (const chunk of req.iterator({destroyOnReturn:false})) {
         size += chunk.length;
-        if (size > 8192) return reply(413, {error:'Request too large'});
+        if (size > 16384) return reply(413, {error:'Request too large'});
         chunks.push(chunk);
       }
       const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+      if (req.url === '/verify-logout') {
+        if (typeof body?.logoutToken !== 'string' || body.logoutToken.length > 12000) throw new Error('Invalid logout');
+        const {payload, protectedHeader} = await jwtVerify(body.logoutToken, jwks, {
+          issuer:config.issuerIdentifier, audience:config.clientId, algorithms:[config.signingAlgorithm],
+          requiredClaims:['iss','aud','iat','jti','events'], maxTokenAge:300, clockTolerance:5});
+        const validId = value => typeof value === 'string' && value.length > 0 && value.length <= 1024 && !/[\x00-\x1f\x7f]/.test(value);
+        const event = payload.events?.['http://schemas.openid.net/event/backchannel-logout'];
+        if (!event || typeof event !== 'object' || Array.isArray(event) || Object.hasOwn(payload,'nonce')
+            || !validId(payload.jti) || !(validId(payload.sub) || validId(payload.sid))
+            || (Object.hasOwn(payload,'sub') && !validId(payload.sub)) || (Object.hasOwn(payload,'sid') && !validId(payload.sid))
+            || (protectedHeader.typ && !['JWT','logout+jwt'].includes(protectedHeader.typ))) throw new Error('Invalid logout claims');
+        return reply(200, {issuer:payload.iss, subject:payload.sub ?? null, sid:payload.sid ?? null,
+          issuedAt:payload.iat, jti:payload.jti});
+      }
       if (!STATE.test(body?.state || '')) return reply(400, {error:'Invalid login'});
       if (req.url === '/begin') {
         for (const [state, attempt] of pending) if (attempt.expires <= Date.now()) pending.delete(state);
@@ -79,15 +95,20 @@ export async function createAdapter(config) {
       const tokens = await oidc.authorizationCodeGrant(client, callback, {
         expectedState:body.state, expectedNonce:attempt.nonce, pkceCodeVerifier:attempt.verifier, idTokenExpected:true});
       const claims = tokens.claims();
-      if (!claims || claims.email_verified !== true || typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 256
+      if (!claims || claims.email_verified !== true || typeof claims.sub !== 'string' || !claims.sub || claims.sub.length > 256 || /[\x00-\x1f\x7f]/.test(claims.sub)
           || typeof claims.email !== 'string' || claims.email.length > 254 || /[\x00-\x1f\x7f]/.test(claims.email) || !/^[^\s:@]+@[^\s:@]+\.[^\s:@]+$/.test(claims.email)) throw new Error('Verified email required');
       if (config.requiredClaim) {
         const value = claims[config.requiredClaim];
         if (value !== config.requiredValue && !(Array.isArray(value) && value.includes(config.requiredValue))) throw new Error('Membership denied');
       }
+      if (claims.sid !== undefined && (typeof claims.sid !== 'string' || !claims.sid || claims.sid.length > 1024 || /[\x00-\x1f\x7f]/.test(claims.sid))) throw new Error('Invalid session ID');
       // Provider credentials never enter a Gadget, session token, durable storage, or response.
-      return reply(200, {email:claims.email, subject:claims.sub, issuer:claims.iss});
-    } catch { reply(400, {error:'OIDC sign-in failed'}); }
+      return reply(200, {email:claims.email, subject:claims.sub, issuer:claims.iss, sid:claims.sid ?? null, issuedAt:claims.iat});
+    } catch (error) {
+      const unavailable=req.url==='/verify-logout' && (['ERR_JWKS_TIMEOUT','ERR_JWKS_NO_MATCHING_KEY','ERR_JWKS_INVALID'].includes(error.code)
+        || ['TypeError','TimeoutError','AbortError'].includes(error.name));
+      reply(unavailable ? 503:400, {error:'OIDC request failed'});
+    }
     finally { active--; }
   });
   server.requestTimeout = 15000; server.headersTimeout = 10000;

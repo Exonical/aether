@@ -37,7 +37,7 @@ export async function createIssuer(tls) {
         res.writeHead(400,{'content-type':'application/json'});return res.end(JSON.stringify({error:'invalid_grant'}));
       }
       const claims = {iss:origin, sub:'user-1', aud:'aether', iat:Math.floor(Date.now()/1000), exp:Math.floor(Date.now()/1000)+300,
-        nonce:grant.params.get('nonce'), email:'admin@example.com', email_verified:true, ...grant.scenario.claims};
+        sid:'session-1', nonce:grant.params.get('nonce'), email:'admin@example.com', email_verified:true, ...grant.scenario.claims};
       const id_token = await new SignJWT(claims).setProtectedHeader({alg:'RS256', kid:'fixture'}).sign(grant.scenario.rogue ? rogue.privateKey : key.privateKey);
       return json({access_token:'fixture-access-token', token_type:'Bearer', expires_in:300, id_token});
     }
@@ -45,6 +45,10 @@ export async function createIssuer(tls) {
   };
   const server = tls ? createHttpsServer(tls,handler) : createHttpServer(handler);
   server.listen(0,'127.0.0.1');await once(server,'listening');origin=`${tls ? "https" : "http"}://127.0.0.1:${server.address().port}`;
-  return {origin, setScenario:value=>{scenario=value;}, exchanges:()=>exchanges,
+  return {origin, signLogout:async (claims={}, rogueSignature=false)=>new SignJWT({iss:origin,aud:'aether',sub:'user-1',sid:'session-1',
+      iat:Math.floor(Date.now()/1000),exp:Math.floor(Date.now()/1000)+300,jti:randomUUID(),
+      events:{'http://schemas.openid.net/event/backchannel-logout':{}},...claims})
+      .setProtectedHeader({alg:'RS256',kid:'fixture',typ:'logout+jwt'}).sign(rogueSignature ? rogue.privateKey:key.privateKey),
+    setScenario:value=>{scenario=value;}, exchanges:()=>exchanges,
     close:async()=>{server.closeAllConnections();await new Promise(resolve=>server.close(resolve));}};
 }

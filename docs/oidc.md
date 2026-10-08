@@ -22,7 +22,7 @@ Start Keycloak in the first terminal:
 
 ```powershell
 $realm = (Resolve-Path runtime/oidc/test/keycloak-realm.json).Path
-docker run --rm --name aether-keycloak -p 127.0.0.1:8180:8080 -e KC_HOSTNAME=http://127.0.0.1:8180 --mount "type=bind,source=$realm,target=/opt/keycloak/data/import/aether.json,readonly" quay.io/keycloak/keycloak:26.7.5 start-dev --import-realm
+docker run --rm --name aether-keycloak -p 127.0.0.1:8180:8080 -e KC_HOSTNAME=http://127.0.0.1:8180 -e KC_BOOTSTRAP_ADMIN_USERNAME=aether-admin -e KC_BOOTSTRAP_ADMIN_PASSWORD=fixture-admin-secret --mount "type=bind,source=$realm,target=/opt/keycloak/data/import/aether.json,readonly" quay.io/keycloak/keycloak:26.7.5 start-dev --import-realm
 ```
 
 Wait until `http://127.0.0.1:8180/realms/aether/.well-known/openid-configuration` returns JSON. Start the private OIDC adapter in a second terminal:
@@ -45,6 +45,8 @@ $env:AETHER_OIDC = 'true'
 $env:AETHER_PUBLIC_URL = 'http://127.0.0.1:8080'
 $env:AETHER_OIDC_ALLOW_HTTP = 'true'
 $env:AETHER_ADMINS = '["admin@example.com"]'
+# Docker Desktop needs to reach the callback from its network namespace.
+$env:AETHER_BIND_ADDRESS = '0.0.0.0'
 npm run workspace:build --prefix runtime
 npm run workspace:start --prefix runtime
 ```
@@ -65,7 +67,7 @@ $env:AETHER_TEST_KEYCLOAK_ISSUER = 'http://127.0.0.1:8180/realms/aether'
 node --test runtime/oidc/test/workspace.test.mjs
 ```
 
-The TLS certificate fixture requires OpenSSL and is skipped on Windows when it is unavailable; Linux CI runs it. These tests start their own adapter and workspace, use an isolated temporary state directory, and occupy port 8080. The ordinary `npm run workspace:test --prefix runtime` suite expects a build with `AETHER_OIDC=false`; it exercises password accounts instead.
+The TLS certificate fixture requires OpenSSL and is skipped on Windows when it is unavailable; Linux CI runs it. The Keycloak test also triggers an admin logout and checks that idle connections and saved Aether tokens are revoked. It uses the synthetic `aether-admin` bootstrap account. These tests start their own adapter and workspace, use an isolated temporary state directory, and occupy port 8080. The ordinary `npm run workspace:test --prefix runtime` suite expects a build with `AETHER_OIDC=false`; it exercises password accounts instead.
 
 ## Production provider configuration
 
@@ -96,6 +98,20 @@ Enable `openid email profile` scopes and emit `email` and boolean `email_verifie
 
 Issuer, authorization, token, and JWKS endpoints must share one origin. Discovery and token/JWKS requests deny redirects and arbitrary destinations. For Authentik, use its application issuer, such as `https://identity.example/application/o/aether/`, select an asymmetric signing key matching the configured algorithm, and configure a verified-email scope mapping. Do not assume an arbitrary or default `email_verified` mapping proves ownership. See [Authentik provider endpoints](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/) and [email verification](https://docs.goauthentik.io/add-secure-apps/providers/oauth2/verify-email-address/).
 
+Register this **back-channel logout URL** on the same OIDC client:
+
+```text
+https://acme.aether.example/gatekeeper/oidc/backchannel-logout
+```
+
+In Keycloak, disable front-channel logout and configure the back-channel URL with **Backchannel logout session required** enabled. The provider must reach Aether through the Gateway and trust its certificate. IdP-initiated user or admin logout then sends a signed notification to Aether. Authentik must support and be configured to send OIDC back-channel logout notifications; it remains unvalidated here.
+
+The endpoint accepts POST form data with one `logout_token`. It requires the configured issuer, audience, signing algorithm, valid signature, recent `iat` (at most five minutes old, five seconds clock tolerance), nonempty `jti`, and the back-channel logout event. `nonce` is prohibited. If `exp` is included, it is validated; issuers using the original standard without `exp` are supported. Invalid tokens return 400; transient verification or registry failures return 503 so the IdP can retry. Signature verification uses the same restricted JWKS endpoint and private CA settings as sign-in. Replay detection and revocation state persist in tenant-local native SQLite.
+
+With `sid`, matching IdP-session tokens are revoked; a supplied `sub` must also match. Without `sid`, all matching subject sessions are revoked. Unknown sessions return success, and duplicate event notifications are idempotent. A logout received before a delayed login finishes prevents that login from creating a usable session. Fresh login after subject-wide logout needs a newer ID-token issue time; a logged-out session ID remains blocked for the maximum local session lifetime plus login grace.
+
+The local Docker Desktop fixture uses `host.docker.internal:8080` for back-channel callbacks. The public workerd launcher defaults to loopback; `AETHER_BIND_ADDRESS=0.0.0.0` explicitly makes it reachable from Docker Desktop for this test. Keep it loopback for ordinary local use. Only the signed back-channel endpoint accepts an alternate callback Host; API and browser login still require the configured public Host and Origin. CI uses host networking and a loopback callback address instead.
+
 Use a separate client and preferably a separate realm/application policy for each tenant. Claims may restrict admission; they never grant admin access. Do not let users select an issuer, client, tenant, or outbound destination through requests.
 
 ## Kubernetes with Cilium Gateway API
@@ -112,8 +128,12 @@ The Gateway must preserve the public Host and WebSocket upgrades. TLS terminates
 
 Workshop currently keys accounts by the **exact verified email**. The first successful OIDC identity verification permanently binds that email to `(issuer, subject)` in a tenant-specific native Durable Object. A later issuer/subject mismatch is denied, including after restart. Changing an email creates a different Workshop identity; changing issuers, pairwise subject configuration, or assigning a released email to a new person requires an explicit migration. Existing email-keyed accounts are linked on their first verified OIDC login. Back up the tenant DO state, including these identity bindings, with the existing PVC.
 
-Workshop mints its own opaque session token, not an OIDC access token. Tokens expire when authentication is attempted after the configured TTL. An already authenticated RPC capability is not actively revoked at expiry, and IdP logout or user disablement does not terminate existing Workshop sessions. Back-channel logout, capability revocation, and automatic account migration are future work. Sign-out uses the app's existing session behavior; it does not perform IdP logout.
+Workshop mints its own opaque session token, not an OIDC access token. New OIDC tokens are registered by hash against issuer, subject, optional IdP session ID, and local expiry. Back-channel logout durably invalidates the matching token registrations, closes idle and active authenticated WebSocket connections, and blocks reuse of derived admin/Gadget capabilities on those RPC connections. Each incoming authenticated WebSocket message checks the registry before dispatch; a registry failure closes the connection. Session expiry also closes registered connections. A saved token cannot reconnect after revocation, including after a runtime restart.
+
+On upgrade from the initial OIDC implementation, old tokens have no registry entry and are rejected; users sign in again. Existing account identity bindings and workspace data remain intact. Back up the new `OidcSessions` namespace with the tenant DO PVC. The registry supports at most 100,000 unexpired token records and 2,048 concurrent authenticated connection watchers per tenant pod, and removes expired state during use and alarms.
+
+Already dispatched operations and background agents are not rolled back or automatically canceled by logout. HTTP batches validate authentication for that batch; an already authorized batch may finish. IdP user disablement only revokes Aether sessions if the provider emits a logout notification. App sign-out still uses the existing browser behavior and does not initiate IdP logout. RP-initiated logout, automatic account migration, and multi-pod ownership remain future work.
 
 The browser login cookie is HttpOnly, SameSite=Lax, and Secure with a `__Host-` prefix on HTTPS. Pending logins are bound to the initiating browser cookie before the popup redirects to the provider. API requests require the public Origin and that cookie. Replays and browser mismatches fail without delivering a session to another pending login.
 
-CI exercises real signed tokens and rejected identities, browser binding, password denial, signup policy, admin/user isolation, persistent identity binding, and workspace restart. A separate real Keycloak container test authenticates through its browser form. Authentik and a production cluster rollout still need deployment validation.
+CI exercises real signed tokens and rejected identities, browser binding, password denial, signup policy, admin/user isolation, persistent identity binding, and workspace restart. A separate real Keycloak container test authenticates through its browser form and performs IdP admin logout. Revocation tests cover signature rejection, session/subject matching, idle connection closure, previously acquired admin/Gadget capabilities, replay, delayed login denial, account isolation, and restart. Authentik and a production cluster rollout still need deployment validation.

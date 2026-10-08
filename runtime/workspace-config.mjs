@@ -84,6 +84,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
   const oidcBrowserModule = oidc ? await readFile(join(root, "src/oidc-browser.js"), "utf8") : null;
   function patchOidcModules(modules) {
     let constructorCount = 0, sessionCount = 0;
+    const counts={authenticate:0,register:0,websocket:0};
     const result = modules.map(module => {
       if (!module.esModule) return module;
       let source = module.esModule;
@@ -91,15 +92,23 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       const session = "if (!session) {\n      throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);";
       if (source.match(constructor)) {
         constructorCount += [...source.matchAll(constructor)].length;
-        source = 'import { bindOidcBrowser, oidcSessionExpired } from "./oidc-browser.js";\n' + source.replace(constructor, "new PublicApiImpl(ctx, await bindOidcBrowser($1, req), abortSession, accessPayload)");
+        source = 'import { bindOidcBrowser, oidcSessionExpired, attachOidcSessionGuard, authenticateOidcSession, guardOidcWebSocket } from "./oidc-browser.js";\n' + source.replace(constructor, "attachOidcSessionGuard(new PublicApiImpl(ctx, await bindOidcBrowser($1, req), abortSession, accessPayload), $1, ctx, abortSession)");
       }
       if (source.includes(session)) {
         sessionCount += source.split(session).length - 1;
         source = source.replace(session, "if (oidcSessionExpired(session, this.env)) {\n      throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken);");
       }
+      const patches={
+        authenticate:["await this.users.get(userId).authenticate(split[1]);", "await this.users.get(userId).authenticate(split[1]);\n    try { await authenticateOidcSession(this, token); } catch { throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken); }"],
+        register:[/await pending.deliver\(`\$\{(email\d*)\}:\$\{secret\}`\);/g, 'if (this.ctx.props.vendorId === "oidc") await this.env.OIDC_SESSIONS.register($1, secret, await account.getOidcIdentity());\n      $&'],
+        websocket:["newWebSocketRpcSession(server, localMain, options)", "newWebSocketRpcSession(guardOidcWebSocket(server, localMain), localMain, options)"],
+      };
+      for(const [name,[before,after]] of Object.entries(patches)) {
+        counts[name]+=before instanceof RegExp ? [...source.matchAll(before)].length : source.split(before).length-1;source=source.replace(before,after);
+      }
       return {...module, esModule:source};
     });
-    if (constructorCount !== 1 || sessionCount !== 1) throw new Error(`Pinned OIDC backend contract changed: constructor=${constructorCount}, session=${sessionCount}`);
+    if (constructorCount !== 1 || sessionCount !== 1 || Object.values(counts).some(count=>count!==1)) throw new Error(`Pinned OIDC backend contract changed: constructor=${constructorCount}, session=${sessionCount}, logout=${JSON.stringify(counts)}`);
     result.push({name:"oidc-browser.js", esModule:oidcBrowserModule});
     return result;
   }
@@ -120,6 +129,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       {name:"AUTH_GATEKEEPERS", text:"oidc"}, {name:"DISABLE_PASSWORD_AUTH", text:"true"},
       {name:"OIDC_PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"},
       {name:"AETHER_OIDC_SESSION_TTL", fromEnvironment:"AETHER_OIDC_SESSION_TTL"},
+      {name:"OIDC_SESSIONS", service:{name:"aether:oidc",entrypoint:"SessionRegistry"}},
     );
     if (config.name === "router") bindings.push({ name: "ASSETS", service: { name: "aether:assets" } });
     if (config.name === "workshop-backend") {
@@ -168,10 +178,12 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     {name:"aether:oidc-endpoint", external:{address:"127.0.0.1:9004", http:{}}},
     {name:"aether:oidc", worker:{compatibilityDate:"2026-09-04", compatibilityFlags:["allow_irrevocable_stub_storage"],
       modules:[{name:"oidc-gatekeeper.js", esModule:await readFile(join(root,"src/oidc-gatekeeper.js"),"utf8")},
-        {name:"oidc-browser.js", esModule:await readFile(join(root,"src/oidc-browser.js"),"utf8")}],
+        {name:"oidc-browser.js", esModule:await readFile(join(root,"src/oidc-browser.js"),"utf8")},
+        {name:"oidc-sessions.js", esModule:await readFile(join(root,"src/oidc-sessions.js"),"utf8")}],
       bindings:[{name:"ADAPTER", service:{name:"aether:oidc-endpoint"}}, {name:"TENANT", text:namespace.slice("aether-tenant-".length)},
+        {name:"SESSION_TTL", fromEnvironment:"AETHER_OIDC_SESSION_TTL"},
         {name:"PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"}, {name:"DISPLAY_NAME", fromEnvironment:"AETHER_OIDC_DISPLAY_NAME"}],
-      durableObjectNamespaces:["OidcLogin", "OidcIdentity"].map(className => ({className, uniqueKey:`${namespace}-oidc-${className}`, enableSql:true})),
+      durableObjectNamespaces:["OidcLogin", "OidcIdentity", "OidcSessions"].map(className => ({className, uniqueKey:`${namespace}-oidc-${className}`, enableSql:true})),
       durableObjectStorage:{localDisk:"aether:do-storage"},
     }},
   );
