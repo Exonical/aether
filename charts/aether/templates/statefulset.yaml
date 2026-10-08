@@ -150,6 +150,7 @@ spec:
             - {name: AETHER_TENANT_ID, value: {{ .Values.tenantId | quote }}}
             - {name: AETHER_EXECUTION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
             - {name: AETHER_EXECUTION_IMAGE, value: {{ include "aether.image" .Values.execution.runnerImage | quote }}}
+            - {name: AETHER_EXECUTION_PULL_POLICY, value: {{ .Values.execution.runnerImage.pullPolicy | quote }}}
             - {name: AETHER_EXECUTION_RUNTIME_CLASS, value: {{ .Values.execution.runtimeClassName | quote }}}
             - {name: AETHER_EXECUTION_STORAGE_CLASS, value: {{ .Values.execution.storageClassName | quote }}}
           resources:

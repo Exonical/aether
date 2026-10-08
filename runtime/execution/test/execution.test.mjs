@@ -58,7 +58,7 @@ test('controller scopes pods, retains PVCs, denies identity forgery and refuses 
     if (method === 'DELETE') {resources.delete(path); return {status: 200, body: {}};}
     throw new Error('Unexpected API request');
   };
-  const manager = createManager({api, tenant: 'acme', namespace: 'aether', image: 'registry.invalid/runner:fixture', maxWorkspaces: 1});
+  const manager = createManager({api, tenant: 'acme', namespace: 'aether', image: 'registry.invalid/runner:fixture', imagePullPolicy: 'Always', maxWorkspaces: 1});
   const url = await listen(manager), id = 'a'.repeat(64), other = 'b'.repeat(64);
   const operation = async (action, workspace = id, tenant = 'acme') => post(`${url}/v1/workspaces/${workspace}`, {action}, {'x-aether-tenant': tenant});
   try {
@@ -67,6 +67,7 @@ test('controller scopes pods, retains PVCs, denies identity forgery and refuses 
     assert.equal((await operation('start', '../escape')).status, 403);
     assert.equal((await operation('start')).status, 200);
     const pod = calls.find(x => x.body?.kind === 'Pod').body;
+    assert.equal(pod.spec.containers[0].imagePullPolicy, 'Always');
     assert.equal(pod.spec.automountServiceAccountToken, false); assert.equal(pod.spec.runtimeClassName, 'kata');
     assert.equal(pod.spec.containers[0].securityContext.readOnlyRootFilesystem, true);
     assert.equal(pod.spec.containers[0].env, undefined);

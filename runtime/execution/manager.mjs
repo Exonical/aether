@@ -29,8 +29,8 @@ export function kubernetesClient({baseUrl, credentials}) {
   };
 }
 
-export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', maxWorkspaces = 32}) {
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenant) || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(namespace) || !image) throw new Error('Invalid execution configuration');
+export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', imagePullPolicy = 'IfNotPresent', maxWorkspaces = 32}) {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenant) || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(namespace) || !image || !['Always', 'IfNotPresent', 'Never'].includes(imagePullPolicy)) throw new Error('Invalid execution configuration');
   const base = `/api/v1/namespaces/${namespace}`;
   const locks = new Set();
   let provisioning = false;
@@ -78,7 +78,7 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
           spec: {automountServiceAccountToken: false, ...(runtimeClass ? {runtimeClassName: runtimeClass} : {}),
             restartPolicy: 'Always', terminationGracePeriodSeconds: 5,
             securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: 'RuntimeDefault'}},
-            containers: [{name: 'runner', image, imagePullPolicy: 'IfNotPresent',
+            containers: [{name: 'runner', image, imagePullPolicy,
               securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ['ALL']}},
               resources: {requests: {cpu: '250m', memory: '256Mi'}, limits: {cpu: '2', memory: '2Gi'}},
               readinessProbe: {httpGet: {path: '/healthz', port: 9006}, periodSeconds: 2},
@@ -117,5 +117,6 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   const api = kubernetesClient({baseUrl: 'https://kubernetes.default.svc', credentials: '/var/run/aether-kubernetes'});
   createManager({api, tenant: process.env.AETHER_TENANT_ID, namespace: process.env.AETHER_EXECUTION_NAMESPACE,
     image: process.env.AETHER_EXECUTION_IMAGE, storageClass: process.env.AETHER_EXECUTION_STORAGE_CLASS,
+    imagePullPolicy: process.env.AETHER_EXECUTION_PULL_POLICY || 'IfNotPresent',
     runtimeClass: process.env.AETHER_EXECUTION_RUNTIME_CLASS || 'kata'}).listen(9005, '127.0.0.1');
 }
