@@ -113,7 +113,7 @@ test('pinned upstream model SDK completes inference inside native workerd', {ski
     export default {async fetch(req,env){const p=await req.json();
       const model=getModel(env,{provider:'ollama',model:'fixture',apiToken:'',apiUrl:p.endpoint},{id:'test',name:'Test',type:'user'});
       return new Response(await completeText(model,{prompt:'Hello'}));
-    }};`,resolveDir:fileURLToPath(backend),sourcefile:'aether-probe.ts'},bundle:true,write:false,target:'es2022',format:'esm',platform:'neutral',conditions:['workerd','worker','browser'],external:['cloudflare:workers','node:*'],loader:{'.txt':'text'},plugins:[{name:'text-symlinks',setup(build){build.onResolve({filter:/\.txt$/},args=>({path:join(args.resolveDir,args.path),namespace:'text'}));build.onLoad({filter:/.*/,namespace:'text'},async args=>({contents:await readFile(args.path,'utf8'),loader:'text'}));}}],tsconfig:fileURLToPath(new URL('tsconfig.json',backend))});
+    }};`,resolveDir:fileURLToPath(backend),sourcefile:'aether-probe.ts'},bundle:true,write:false,target:'es2022',format:'esm',platform:'neutral',mainFields:['module','main'],conditions:['workerd','worker','browser'],external:['cloudflare:workers','node:*'],loader:{'.txt':'text'},plugins:[{name:'text-symlinks',setup(build){build.onResolve({filter:/\.txt$/},args=>({path:join(args.resolveDir,args.path),namespace:'text'}));build.onLoad({filter:/.*/,namespace:'text'},async args=>({contents:await readFile(args.path,'utf8'),loader:'text'}));}}],tsconfig:fileURLToPath(new URL('tsconfig.json',backend))});
   let seen;
   const provider=createServer(async(req,res)=>{
     let body='';for await(const chunk of req)body+=chunk;seen={url:req.url,payload:JSON.parse(body),headers:req.headers};

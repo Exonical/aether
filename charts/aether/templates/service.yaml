@@ -1,0 +1,18 @@
+{{- range $headless := list false true }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ $.Release.Namespace | quote }}
+  name: {{ include "aether.name" $ }}{{ if $headless }}-headless{{ end }}
+  labels: {{- include "aether.labels" $ | nindent 4 }}
+spec:
+  {{- if $headless }}
+  clusterIP: None
+  {{- end }}
+  selector: {{- include "aether.selector" $ | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}

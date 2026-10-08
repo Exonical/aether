@@ -59,6 +59,14 @@ The fixed Worker probe reports successful loading and denied ambient network acc
 
 The runtime exposes diagnostic endpoints without authentication. Keep it private. It accepts only the bundled diagnostic module, not arbitrary user code.
 
+## Deploy one shared application with Helm
+
+The [Helm chart](charts/aether/README.md) deploys one shared frontend, runtime pod and PVC with user-provided PostgreSQL, S3, OIDC and model services plus Cilium Gateway API. [Departments](docs/departments.md) provide membership and scoped directory administration inside the application; users retain private workspaces and explicit sharing.
+
+```sh
+helm upgrade --install aether charts/aether --namespace aether --create-namespace -f my-app.yaml --wait
+```
+
 ## Deploy the runtime to Kubernetes
 
 [Deployment instructions](deploy/kubernetes/README.md) cover building an image, selecting your registry and CSI storage, and applying the base or Kata overlay. The manifests create one StatefulSet replica, a persistent volume, HTTP probes, and a policy denying outbound network access. They expose a ClusterIP service; no public ingress is installed.
@@ -84,7 +92,7 @@ Add Authentik sign-in, then implement R2 metadata migration and browser renderin
 
 | Path | Purpose |
 | --- | --- |
-| `cloudflare-os/` | Upstream submodule pinned at `6478a1448a11524e2f7c2575ad66fab0bc47c433` |
+| `cloudflare-os/` | Upstream submodule pinned at `4358072f8cb1bc9ddfb6ee11122e194c76cd71e0` |
 | `runtime/` | Diagnostic runtime and native workspace build, config, images, and integration tests |
 | `deploy/kubernetes/` | Diagnostic base, workspace, tenant S3, and Cilium Gateway API overlays |
 | `scripts/run-local.mjs` | Launcher for the pinned upstream development workspace |

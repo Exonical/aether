@@ -39,7 +39,7 @@ References: [workerd configuration schema](https://github.com/cloudflare/workerd
 
 ## Pinned upstream inventory
 
-The starter's existing submodule remains at `6478a1448a11524e2f7c2575ad66fab0bc47c433`. Treat that commit as the source of truth; upstream main can change independently. The relevant files are `packages/*/wrangler.jsonc` and the Workshop's `src/env.d.ts` within the submodule.
+The starter's existing submodule remains at `4358072f8cb1bc9ddfb6ee11122e194c76cd71e0`. Treat that commit as the source of truth; upstream main can change independently. The relevant files are `packages/*/wrangler.jsonc` and the Workshop's `src/env.d.ts` within the submodule.
 
 | Component / binding | Upstream role | Self-hosted work needed |
 | --- | --- | --- |

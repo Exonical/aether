@@ -49,10 +49,10 @@ runBin("typescript", [], join(upstream, "packages/typed-storage"));
 runBin("vite", ["build"], join(upstream, "packages/workshop-frontend"));
 for (const name of ["gatekeeper-context", "gatekeeper-scheduler"]) {
   const cwd = join(upstream, "packages", name);
-  runNode(join(cwd, "build-app.mjs"), [], cwd);
+  runNode(join(cwd, "build-app.ts"), [], cwd);
 }
 const backend = join(upstream, "packages/workshop-backend");
-runNode(join(backend, "scripts/build-format-blueprints.mjs"), [], backend);
+runNode(join(backend, "scripts/build-bundled-blueprints.ts"), [], backend);
 const scratch = await mkdtemp(join(tmpdir(), "aether-build-"));
 try {
   const workers = [];

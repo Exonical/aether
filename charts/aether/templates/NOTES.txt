@@ -1,0 +1,5 @@
+Aether shared application: {{ .Values.tenantId }}
+kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "aether.name" . }}
+{{ if .Values.gateway.enabled }}Open https://{{ .Values.gateway.hostname }}{{ end }}
+{{ if .Values.departments.enabled }}Manage departments at /departments after signing in.{{ end }}
+Keep one runtime replica and retain its state PVC.

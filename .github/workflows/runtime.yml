@@ -5,6 +5,17 @@ on:
 permissions:
   contents: read
 jobs:
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - run: python3 -m pip install PyYAML==6.0.3
+      - run: helm lint charts/aether --strict -f charts/aether/examples/production.yaml
+      - run: python3 charts/aether/tests/render.py
+      - run: helm package charts/aether --destination /tmp
   runtime:
     runs-on: ubuntu-24.04
     steps:
@@ -51,6 +62,7 @@ jobs:
       - run: pnpm run types:scripts
       - run: pnpm --filter custom-gatekeeper test:run
       - run: pnpm --filter error-reporter test:run
+      - run: pnpm --filter @gadgets/error-reporting test:run
   workspace:
     runs-on: ubuntu-24.04
     services:
@@ -88,7 +100,10 @@ jobs:
           baseline_sha="$BASE_SHA"
           if ! git cat-file -e "$baseline_sha^{commit}" 2>/dev/null; then baseline_sha=origin/main; fi
           git archive "$baseline_sha" runtime | tar -x -C /tmp/aether-baseline
-          ln -s "$GITHUB_WORKSPACE/cloudflare-os" /tmp/aether-baseline/cloudflare-os
+          baseline_upstream_sha=$(git ls-tree "$baseline_sha" cloudflare-os | awk '{print $3}')
+          git -C cloudflare-os fetch origin "$baseline_upstream_sha"
+          git -C cloudflare-os worktree add --detach /tmp/aether-baseline/cloudflare-os "$baseline_upstream_sha"
+          pnpm --dir /tmp/aether-baseline/cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
           npm ci --prefix /tmp/aether-baseline/runtime
           node /tmp/aether-baseline/runtime/build-workspace.mjs
         env:

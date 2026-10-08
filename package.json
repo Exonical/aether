@@ -27,6 +27,8 @@
     "vite": "catalog:",
     "vite-plus": "catalog:",
     "wrangler": "catalog:",
-    "vitest": "catalog:"
+    "vitest": "catalog:",
+    "@vitest/browser-preview": "4.1.11",
+    "@vitest/ui": "4.1.11"
   }
 }

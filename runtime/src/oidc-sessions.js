@@ -6,7 +6,14 @@ export class SessionRegistry extends WorkerEntrypoint {
   #registry() {return this.ctx.exports.OidcSessions.getByName('sessions');}
   async register(email, secret, identity) {return this.#registry().register(await hash(`${email}:${secret}`),email,identity);}
   async authenticate(token) {const id=await hash(token);await this.#registry().check(id);return id;}
-  check(id) {return this.#registry().check(id);}
+  async principal(token) {return this.#registry().check(await hash(token));}
+  async accessVersion() {return this.env.DEPARTMENTS_ENABLED === 'true' ? this.env.DEPARTMENTS.accessVersion() : null;}
+  async check(id, accessVersion) {
+    const email=await this.#registry().check(id);
+    if(this.env.DEPARTMENTS_ENABLED === 'true' && (!Number.isSafeInteger(accessVersion) || accessVersion !== await this.env.DEPARTMENTS.accessVersion()))
+      throw new Error('Department access changed; reconnect required');
+    return email;
+  }
   watch(id, watcher) {return this.#registry().watch(id,watcher);}
   unwatch(id, watcher) {return this.#registry().unwatch(id,watcher);}
 }
@@ -45,6 +52,7 @@ export class OidcSessions extends DurableObject {
     const subjectKey=await hash(JSON.stringify([identity.issuer,'sub',identity.subject]));
     const sidKey=identity.sid ? await hash(JSON.stringify([identity.issuer,'sid',identity.sid])) : null;
     const sidSubjectKey=identity.sid ? await hash(JSON.stringify([identity.issuer,'sid-sub',identity.sid,identity.subject])) : null;
+    if(this.env.DEPARTMENTS_ENABLED === "true") await this.env.DEPARTMENTS.syncLogin(email,identity.departments || []);
     this.#prune();
     const cutoff=this.#sql('SELECT issued FROM logout_cutoffs WHERE id=?',subjectKey).toArray()[0];
     if((cutoff && identity.issuedAt<=cutoff.issued) || (sidKey && this.#sql('SELECT id FROM logout_cutoffs WHERE id IN (?,?)',sidKey,sidSubjectKey).toArray().length))
@@ -55,8 +63,9 @@ export class OidcSessions extends DurableObject {
     this.#alarm();
   }
   check(id) {
-    const session=this.#sql('SELECT revoked,expires FROM sessions WHERE id=?',id).toArray()[0];
+    const session=this.#sql('SELECT email,revoked,expires FROM sessions WHERE id=?',id).toArray()[0];
     if(!session || session.revoked || session.expires<=Date.now()) throw new Error('OIDC session revoked or expired');
+    return session.email;
   }
   async watch(id,watcher) {
     this.check(id);

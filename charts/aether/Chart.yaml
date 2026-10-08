@@ -1,0 +1,7 @@
+apiVersion: v2
+name: aether
+description: Shared on-prem Aether workspace with departments with user-provided services and Cilium Gateway API
+type: application
+version: 0.1.0
+appVersion: "0.1.0"
+kubeVersion: ">=1.29.0-0"

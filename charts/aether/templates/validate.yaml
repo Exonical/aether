@@ -1,0 +1,27 @@
+{{- $_ := required "tenantId must match the shared application workspace image" .Values.tenantId -}}
+{{- range $key := list "s3" "postgres" "models" "oidc" -}}
+{{- $adapter := index $.Values $key -}}
+{{- if $adapter.enabled -}}
+{{- $_ := required (printf "%s.existingSecret is required" $key) $adapter.existingSecret -}}
+{{- if and $.Values.networkPolicy.enabled (not (or $adapter.egress $.Values.networkPolicy.extraEgress)) -}}
+{{- fail (printf "%s.egress or networkPolicy.extraEgress must allow the configured backend" $key) -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.gateway.enabled -}}
+{{- $_ := required "gateway.hostname is required" .Values.gateway.hostname -}}
+{{- if .Values.gateway.create -}}
+{{- $_ := required "gateway.tlsSecretName is required" .Values.gateway.tlsSecretName -}}
+{{- else if not .Values.gateway.parentRefs -}}
+{{- fail "gateway.parentRefs is required when gateway.create=false" -}}
+{{- end -}}
+{{- end -}}
+{{- if .Values.oidc.enabled -}}
+{{- $_ := required "oidc.publicUrl is required" .Values.oidc.publicUrl -}}
+{{- if and .Values.gateway.enabled (ne .Values.oidc.publicUrl (printf "https://%s" .Values.gateway.hostname)) -}}
+{{- fail "oidc.publicUrl must match the HTTPS gateway.hostname origin" -}}
+{{- end -}}
+{{- end -}}
+{{- if and .Values.departments.enabled (not .Values.oidc.enabled) -}}
+{{- fail "departments.enabled requires oidc.enabled" -}}
+{{- end -}}

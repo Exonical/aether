@@ -54,10 +54,10 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     const exited=once(child,'exit');child.kill('SIGTERM');await exited;
   }
   t.after(()=>stop());
-  async function start() {
+  async function start(departmentsEnabled=true) {
     child=spawn(process.execPath,[join(root,'run-workspace.mjs')], {env:{...process.env,
       AETHER_BIND_ADDRESS:keycloak ? '0.0.0.0':'127.0.0.1',AETHER_TENANT_ID:'acme',AETHER_STATE_DIR:stateDir,AETHER_PORT:'8080',AETHER_PUBLIC_URL:origin,AETHER_OIDC_PORT:String(port),
-      AETHER_OIDC_ALLOW_HTTP:'true',AETHER_ADMINS:'["admin@example.com"]'},stdio:['ignore','pipe','pipe']});
+      AETHER_DEPARTMENTS:String(departmentsEnabled),AETHER_OIDC_ALLOW_HTTP:'true',AETHER_ADMINS:'["admin@example.com"]'},stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',v=>logs+=v);child.stderr.on('data',v=>logs+=v);
     for(let i=0;i<200;i++) {
       if(child.exitCode !== null) break;
@@ -75,16 +75,22 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
   }
   async function login(browser, username='admin') {
     const attempt=await browser.api.startGatekeeperLogin('oidc');
-    const result=attempt.attempt.wait();
-    // Attach rejection immediately, including for failure-path tests.
-    const outcome=result.then(token=>({token}),error=>({error}));
     const redirect=await fetch(attempt.url,{headers:{cookie:browser.cookie},redirect:'manual'});
     assert.equal(redirect.status,302,logs);
     const authorize=redirect.headers.get('location');
     const callback=keycloak ? await keycloakLogin(authorize,username)
       : (await fetch(authorize,{redirect:'manual'})).headers.get('location');
     const response=await fetch(callback,{headers:{cookie:browser.cookie},redirect:'manual'});
-    return {response, callback, outcome:await outcome};
+    if(response.status===302){
+      const handoff=new URL(response.headers.get('location'));
+      assert.equal(handoff.origin,origin);assert.equal(handoff.pathname,'/connect/handoff');
+      let pending;try {pending=await attempt.attempt.receive();} catch(error){return {response,callback,outcome:{error}};}
+      assert.equal(pending,null,'Handoff must be confirmed before receiving session');
+      await assert.rejects(async()=>await browser.api.confirmLogin(handoff.hash.slice(1),'0'.repeat(64)));
+      await browser.api.confirmLogin(handoff.hash.slice(1),attempt.nonce);
+    }
+    const outcome=await attempt.attempt.receive().then(token=>({token}),error=>({error}));
+    return {response, callback, outcome};
   }
   try {
     await start();const admin=await browser();const other=await browser();
@@ -97,18 +103,76 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     const attack=await admin.api.startGatekeeperLogin('oidc');
     assert.equal((await fetch(attack.url,{headers:{cookie:other.cookie},redirect:'manual'})).status,400);
     assert.equal((await fetch(attack.url,{redirect:'manual'})).status,400);
-    const signed=await login(admin);assert.equal(signed.response.status,200,logs);assert.ok(signed.outcome.token,logs);
+    const signed=await login(admin);assert.equal(signed.response.status,302,logs);assert.ok(signed.outcome.token,logs);
     const token=signed.outcome.token;
-    const user=await admin.api.authenticate(token);assert.equal((await user.whoami()).id,'admin@example.com');
-    const adminApi=await user.getAdminApi();assert.ok(adminApi);
+    let user=await admin.api.authenticate(token);assert.equal((await user.whoami()).id,'admin@example.com');
+    let adminApi=await user.getAdminApi();assert.ok(adminApi);
     await user.setOwnDisplayName('Persistent OIDC Admin');
     const gadget=await user.newGadget().getMetadata();
     assert.equal((await fetch(signed.callback,{headers:{cookie:admin.cookie}})).status,400);
     if(issuer) issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com'}});
     const signedOther=await login(other,'other');assert.ok(signedOther.outcome.token,logs);
-    const otherUser=await other.api.authenticate(signedOther.outcome.token);
+    let otherUser=await other.api.authenticate(signedOther.outcome.token);
     assert.equal(await otherUser.getAdminApi(),null);
     await assert.rejects(async()=>await otherUser.openGadget(gadget.id).getMetadata(),/access|permission|not found/i);
+    const departments = async (client, token, body, expected=200) => {
+      const response=await fetch(origin+'/api/departments',{method:body?'POST':'GET',headers:{cookie:client.cookie,origin,
+        authorization:'Bearer '+token,...(body?{'content-type':'application/json'}:{})},body:body?JSON.stringify(body):undefined});
+      assert.equal(response.status,expected,await response.clone().text());
+      const data=await response.json();
+      if(response.ok && body && !['audit','rename'].includes(body.action)){
+        // Membership edits invalidate old RPC connections; browser clients reconnect with saved tokens.
+        Object.assign(admin,await browser());user=await admin.api.authenticate(token);adminApi=await user.getAdminApi();
+        Object.assign(other,await browser());otherUser=await other.api.authenticate(signedOther.outcome.token);
+      }
+      return data;
+    };
+    assert.equal((await fetch(origin+'/departments')).status,200);
+    assert.match(await (await fetch(origin)).text(),/href="\/departments"/);
+    await departments(admin,token,{action:'create',department:'engineering',name:'Engineering'});
+    await departments(admin,token,{action:'create',department:'finance',name:'Finance'});
+    if(issuer){
+      config.departmentClaim='groups';config.departmentMapping={'/Engineering':'engineering','/Finance':'finance'};
+      issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',groups:['/Engineering','admin']}});
+      const mappedBrowser=await browser();const mapped=await login(mappedBrowser,'other');assert.ok(mapped.outcome.token);
+      const membership=await departments(mappedBrowser,mapped.outcome.token);
+      assert.deepEqual(membership.departments.map(d=>d.id),['engineering']);
+      assert.equal(membership.departments[0].canManage,false,'Signed groups must never grant admin');
+      issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',groups:[]}});
+      const removedBrowser=await browser();const removed=await login(removedBrowser,'other');assert.deepEqual((await departments(removedBrowser,removed.outcome.token)).departments,[]);
+      config.departmentClaim=undefined;config.departmentMapping={};
+    }
+    await departments(admin,token,{action:'setMember',department:'engineering',email:'other@example.com',role:'admin'});
+    assert.deepEqual((await departments(other,signedOther.outcome.token)).departments.map(d=>d.id),['engineering']);
+    const relogged=await login(other,'other');assert.ok(relogged.outcome.token);
+    assert.equal((await departments(other,relogged.outcome.token)).departments[0].canManage,true,'Manual admin grant survives login synchronization');
+    await departments(other,signedOther.outcome.token,{action:'create',department:'shadow',name:'Shadow'},403);
+    await departments(other,signedOther.outcome.token,{action:'setMember',department:'finance',email:'member@example.com',role:'member'},403);
+    await departments(other,signedOther.outcome.token,{action:'setMember',department:'engineering',email:'member@example.com',role:'admin'},403);
+    await departments(other,signedOther.outcome.token,{action:'setMember',department:'engineering',email:'member@example.com',role:'member'});
+    await departments(admin,token,{action:'removeMember',department:'engineering',email:'other@example.com'});
+    await departments(other,signedOther.outcome.token,{action:'setMember',department:'engineering',email:'member@example.com',role:'member'},403);
+    assert.deepEqual((await departments(other,signedOther.outcome.token)).departments,[]);
+    // Share-link and direct collaborator grants cannot cross departmental boundaries.
+    await departments(admin,token,{action:'setMember',department:'engineering',email:'admin@example.com',role:'member'});
+    await departments(admin,token,{action:'setMember',department:'finance',email:'other@example.com',role:'member'});
+    const share=await user.openGadget(gadget.id).createShareLink('build');
+    await assert.rejects(async()=>await otherUser.openGadget(gadget.id,share.key).getMetadata(),/denied|access|permission/i);
+    await assert.rejects(async()=>await user.openGadget(gadget.id).addCollaborator('other@example.com','build'),/denied|access|permission/i);
+    await departments(admin,token,{action:'setMember',department:'engineering',email:'other@example.com',role:'member'});
+    const formerlyShared=await otherUser.openGadget(gadget.id,share.key);
+    assert.equal((await formerlyShared.getMetadata()).id,gadget.id);
+    await departments(admin,token,{action:'removeMember',department:'engineering',email:'other@example.com'});
+    await assert.rejects(async()=>await formerlyShared.getMetadata(),'Previously acquired capability must fail after membership edit');
+    await assert.rejects(async()=>await otherUser.openGadget(gadget.id).getMetadata(),/denied|access|permission/i);
+    await assert.rejects(async()=>await otherUser.openGadget(gadget.id,share.key).getMetadata(),/denied|access|permission/i);
+    const financeWorkspace=await otherUser.newGadget().getMetadata();
+    const financeLink=await otherUser.openGadget(financeWorkspace.id).createShareLink('build');
+    await assert.rejects(async()=>await user.openGadget(financeWorkspace.id,financeLink.key).getMetadata(),/denied|access|permission/i,'Global admin must not bypass department sharing');
+    await departments(other,signedOther.outcome.token,{action:'audit'},403);
+    assert.ok((await departments(admin,token,{action:'audit'})).some(e=>e.action==='removeMember'));
+    await departments(admin,token+'forged',null,401);
+    assert.equal((await fetch(origin+'/api/departments',{headers:{cookie:admin.cookie,origin:'https://evil.invalid',authorization:'Bearer '+token}})).status,403);
     await adminApi.setSignupsEnabled(false);
     if(issuer) issuer.setScenario({claims:{sub:'new-subject',email:'new@example.com'}});
     const blocked=await login(other,'new');assert.ok(blocked.outcome.error);assert.match(blocked.outcome.error.message,/disabled/i);
@@ -119,6 +183,7 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     }
     await stop();await start();const restored=await browser();
     assert.equal((await restored.api.authenticate(token).whoami()).name,'Persistent OIDC Admin');
+    assert.equal((await departments(restored,token)).departments.length,2,'Department directory persists across restart');
     const existing=await login(restored);assert.ok(existing.outcome.token,'Existing user must sign in with signups closed');
     assert.equal((await restored.api.authenticate(existing.outcome.token).openGadget(gadget.id).getMetadata()).id,gadget.id);
     if(issuer) {
@@ -170,6 +235,7 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
       await assert.rejects(async()=>await gadgetCapability.getMetadata());
       assert.equal((await siblingUser.whoami()).id,'admin@example.com','Different sid stays authenticated');
       const retry=await browser();await assert.rejects(async()=>await retry.api.authenticate(logged.outcome.token));
+      await departments(retry,logged.outcome.token,null,401);
       assert.equal((await sendLogout(logout)).status,200,'Duplicate notification is idempotent');
       await stop();await start();const afterLogout=await browser();
       await assert.rejects(async()=>await afterLogout.api.authenticate(logged.outcome.token),'Revocation must survive restart');
@@ -189,5 +255,7 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
 
     }
 
+    await stop();await start(false);
+    assert.equal((await fetch(origin+'/departments')).status,404,'Disabled department UI is unavailable');
   } catch(error) {error.message+='\nNative logs:\n'+logs;throw error;}
 });

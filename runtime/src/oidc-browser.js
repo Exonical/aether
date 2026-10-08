@@ -34,11 +34,12 @@ export async function authenticateOidcSession(api,token) {
   if(!guard || guard.closed)throw new Error('Invalid session');
   const id=await guard.env.OIDC_SESSIONS.authenticate(token);
   if(!guard.sessions.has(id)) {
-    const watcher=randomNonce();guard.sessions.set(id,watcher);
+    const watcher=randomNonce(), version=await guard.env.OIDC_SESSIONS.accessVersion();guard.sessions.set(id,{watcher,version});
     // Losing the registry call on eviction/restart also closes the connection, failing closed.
     guard.ctx.waitUntil((async()=>{
       try {
         while(!guard.closed) {
+          await guard.env.OIDC_SESSIONS.check(id,version);
           const reason=await guard.env.OIDC_SESSIONS.watch(id,watcher);
           if(reason==='renew')continue;
           if(!guard.closed)guard.abortSession(new Error('OIDC session revoked or expired'));
@@ -53,13 +54,18 @@ export function guardOidcWebSocket(socket, api) {
   if(!guard)throw new Error('Missing OIDC session guard');
   socket.addEventListener('close',()=>{
     guard.closed=true;
-    for(const [id,watcher] of guard.sessions)guard.ctx.waitUntil(guard.env.OIDC_SESSIONS.unwatch(id,watcher).catch(()=>{}));
+    for(const [id,{watcher}] of guard.sessions)guard.ctx.waitUntil(guard.env.OIDC_SESSIONS.unwatch(id,watcher).catch(()=>{}));
     guard.sessions.clear();
   });
-  let queue=Promise.resolve(), queued=0;
+  const check=()=>Promise.all([...guard.sessions].map(([id,{version}])=>guard.env.OIDC_SESSIONS.check(id,version)));
+  let queue=Promise.resolve(), queued=0, outputQueue=Promise.resolve(), outgoing=0;
   return {
     get readyState(){return socket.readyState;},
-    send:message=>socket.send(message),close:(...args)=>socket.close(...args),
+    send:message=>{
+      if(++outgoing>256){guard.abortSession(new Error('RPC message capacity exhausted'));return;}
+      outputQueue=outputQueue.then(async()=>{if(!guard.closed){await check();if(!guard.closed)socket.send(message);}})
+        .catch(()=>guard.abortSession(new Error('Session or department access changed'))).finally(()=>outgoing--);
+    },close:(...args)=>socket.close(...args),
     addEventListener(type,listener) {
       if(type!=='message')return socket.addEventListener(type,listener);
       socket.addEventListener(type,event=>{
@@ -67,7 +73,7 @@ export function guardOidcWebSocket(socket, api) {
         queue=queue.then(async()=>{
           if(guard.closed)return;
           // Covers all derived capabilities (Gadget/admin/subscription), not only the user API.
-          await Promise.all([...guard.sessions.keys()].map(id=>guard.env.OIDC_SESSIONS.check(id)));
+          await check();
           listener.call(socket,event);
         }).catch(()=>guard.abortSession(new Error('OIDC session revoked or expired'))).finally(()=>queued--);
       });

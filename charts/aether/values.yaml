@@ -1,0 +1,118 @@
+# One shared application. tenantId is its stable installation identity, not a department.
+fullnameOverride: ''
+image:
+  repository: registry.example.com/aether/workspace
+  tag: 0.8.0
+  digest: ''
+  pullPolicy: IfNotPresent
+imagePullSecrets: []
+runtimeClassName: kata
+admins: []
+resources:
+  requests:
+    cpu: 250m
+    memory: 512Mi
+  limits:
+    cpu: '2'
+    memory: 2Gi
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+persistence:
+  size: 10Gi
+  storageClassName: null
+  accessMode: ReadWriteOncePod
+gateway:
+  enabled: false
+  create: true
+  className: cilium
+  hostname: ''
+  tlsSecretName: ''
+  parentRefs: []
+networkPolicy:
+  enabled: true
+  allowSameNamespace: false
+  extraEgress: []
+s3:
+  enabled: false
+  existingSecret: ''
+  image:
+    repository: registry.example.com/aether/s3-adapter
+    tag: 0.1.0
+    digest: ''
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 256Mi
+  ca:
+    secretName: ''
+    key: ca.crt
+  egress: []
+postgres:
+  enabled: false
+  existingSecret: ''
+  image:
+    repository: registry.example.com/aether/postgres-kv
+    tag: 0.1.0
+    digest: ''
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 512Mi
+  ca:
+    secretName: ''
+    key: ca.crt
+  egress: []
+models:
+  enabled: false
+  existingSecret: ''
+  image:
+    repository: registry.example.com/aether/model-gateway
+    tag: 0.1.0
+    digest: ''
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 256Mi
+  ca:
+    secretName: ''
+    key: ca.crt
+  egress: []
+oidc:
+  enabled: false
+  existingSecret: ''
+  image:
+    repository: registry.example.com/aether/oidc
+    tag: 0.1.0
+    digest: ''
+    pullPolicy: IfNotPresent
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: '1'
+      memory: 256Mi
+  ca:
+    secretName: ''
+    key: ca.crt
+  egress: []
+  publicUrl: ''
+  displayName: Single sign-on
+  sessionTtl: 28800
+tenantId: ''
+departments:
+  enabled: false
