@@ -139,3 +139,20 @@ assert broker["spec"]["ports"][0]["port"] == 9007
 execution_values["execution"]["runtimeClassName"] = ""
 render(execution_values, valid=False)
 print("Private Git broker, provider configuration, CA isolation and required RuntimeClass checks passed")
+
+# Agent shell egress cannot bypass the private Git capability broker, including through DNS.
+execution_values['execution']['runtimeClassName'] = 'kata'
+docs = render(execution_values)
+policy = next(d for d in docs if d['kind'] == 'CiliumNetworkPolicy' and d['metadata']['name'].endswith('execution-workspaces'))
+assert len(policy['spec']['egress']) == 2
+assert policy['spec']['egress'][0]['toPorts'][0]['ports'] == [{'port': '9007', 'protocol': 'TCP'}]
+dns = policy['spec']['egress'][1]['toPorts'][0]['rules']['dns']
+assert len(dns) == 1 and dns[0]['matchName'].endswith('-execution-git.aether-system.svc.cluster.local')
+assert not any('toFQDNs' in rule or 'toEntities' in rule for rule in policy['spec']['egress'])
+render({**execution_values, 'networkPolicy': {'enabled': False}}, valid=False)
+render({**execution_values, 'execution': {**execution_values['execution'], 'egress': [{'toEntities': ['world']}]}}, valid=False)
+execution_values['execution']['git']['allowWrites'] = True
+manager = next(c for c in state(render(execution_values))['spec']['template']['spec']['containers'] if c['name'] == 'execution-manager')
+assert {e['name']:e['value'] for e in manager['env']}['AETHER_EXECUTION_GIT_WRITES'] == 'true'
+assert any(m['name'] == 'execution-git-tmp' for m in manager['volumeMounts'])
+print('Agent write opt-in, private controller scratch, broker-only egress and DNS bypass rejection passed')

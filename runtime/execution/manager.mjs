@@ -170,7 +170,7 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
       await suspend(id, pod);
       return {state: pod ? 'stopping' : 'suspended'};
     }
-    if (!['exec', 'read', 'write', 'list'].includes(body.action)) throw new Error('Unknown operation');
+    if (!['exec', 'read', 'write', 'list', 'git-snapshot'].includes(body.action)) throw new Error('Unknown operation');
     if (status(pod).state !== 'ready') throw new Error('Workspace not ready');
     await touch(pod);
     try {return await call('POST', `${base}/pods/${name}:9006/proxy/operation`, body);}
@@ -181,6 +181,10 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
     if (request.url === '/healthz' && request.method === 'GET') return reply(200, {ready: true});
     if (request.headers['x-aether-tenant'] !== tenant) return reply(403, {error: 'Execution access denied'});
     if (request.url === '/v1/git/providers' && request.method === 'GET') return reply(200, gitBroker.providers());
+    if (['/v1/git/prepare-action', '/v1/git/apply-action'].includes(request.url) && request.method === 'POST') {
+      try {return reply(200, await gitBroker[request.url.endsWith('/prepare-action') ? 'prepareAction' : 'applyAction'](await readJson(request, 3000000)));}
+      catch {return reply(400, {error: 'Git action refused'});}
+    }
     const oauth = /^\/v1\/git\/oauth\/(begin|exchange|refresh|revoke)$/.exec(request.url);
     if (oauth && request.method === 'POST') {
       try {
@@ -233,8 +237,8 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   const api = kubernetesClient({baseUrl: 'https://kubernetes.default.svc', credentials: '/var/run/aether-kubernetes'});
   const providers = JSON.parse(process.env.AETHER_EXECUTION_GIT_PROVIDERS || '[]');
   const clients = process.env.AETHER_EXECUTION_GIT_OAUTH_FILE ? JSON.parse(await readFile(process.env.AETHER_EXECUTION_GIT_OAUTH_FILE, 'utf8')) : {};
-  const oauth = createGitOAuth({providers, clients, publicUrl: process.env.AETHER_EXECUTION_PUBLIC_URL});
-  const gitBroker = createGitBroker({providers, oauth, publicUrl: process.env.AETHER_EXECUTION_GIT_URL});
+  const oauth = createGitOAuth({providers, clients, allowWrites: process.env.AETHER_EXECUTION_GIT_WRITES === 'true', publicUrl: process.env.AETHER_EXECUTION_PUBLIC_URL});
+  const gitBroker = createGitBroker({providers, oauth, allowWrites: process.env.AETHER_EXECUTION_GIT_WRITES === 'true', publicUrl: process.env.AETHER_EXECUTION_GIT_URL});
   gitBroker.server.listen(9007, '0.0.0.0');
   createManager({gitBroker, imagePullSecrets: JSON.parse(process.env.AETHER_EXECUTION_IMAGE_PULL_SECRETS || '[]'), api, tenant: process.env.AETHER_TENANT_ID, namespace: process.env.AETHER_EXECUTION_NAMESPACE,
     image: process.env.AETHER_EXECUTION_IMAGE, storageClass: process.env.AETHER_EXECUTION_STORAGE_CLASS,

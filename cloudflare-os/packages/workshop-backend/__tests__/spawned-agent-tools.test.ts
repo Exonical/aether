@@ -16,6 +16,8 @@ import type {
 } from "@gadgets/workshop-shared/api";
 import type { OverseerDurableObject } from "../src/overseer.js";
 import type { AgentSpawnerBinding } from "../src/agent-spawner-binding";
+import {buildPackBytes, concatBytes} from '../src/git-codec';
+import {COMMIT_1, COMMIT_2, FIXTURE_OBJECTS, b64Bytes} from './git-cache-fixtures';
 import { runAgent } from "../src/agent";
 
 declare module "cloudflare:workers" {
@@ -99,6 +101,85 @@ function toolCalls(impl: any, chatId: number): AiToolCall[] {
 }
 
 describe('owner-authorized Linux workspace tools', () => {
+  it('imports sandbox packs without granting new commits remote provenance and blocks stale sensitive approvals', async () => {
+    await withImpl(async impl => {
+      const chatId = 1;
+      impl.storage.chatMeta.put({id: chatId, title: 'Git task', execution: {mode: 'agent', environment: 'rhel10', git: {connectionId: 'owned', repository: 'team/project'}}, started: new Date(), lastActive: new Date()});
+      impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
+      impl.users.get = () => ({getExecutionLaunch: async () => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
+        git: {connectionId: 'owned', providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
+      const bytes = concatBytes(await buildPackBytes(FIXTURE_OBJECTS.map(object => ({type: object.type, payload: b64Bytes(object.payload)}))));
+      let pack = btoa(String.fromCharCode(...bytes));
+      const calls: string[] = [];
+      impl.env = {...impl.env, AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
+        AETHER_EXECUTION: {fetch: async (url: string, init: RequestInit) => {
+          calls.push(url); const request = JSON.parse(String(init.body));
+          if (request.action === 'git-snapshot') return Response.json({head: COMMIT_2, pack, anchor: COMMIT_1});
+          return Response.json({...request.action, old: '0'.repeat(40), baseHead: COMMIT_1, anchor: COMMIT_1, anchorCommit: FIXTURE_OBJECTS.find(object => object.oid === COMMIT_1)!.payload, sha256: 'a'.repeat(64), size: bytes.length});
+        }}};
+      await impl.ctx.storage.put('aether.execution.enabled.1', true);
+      const result = await impl.agentGitOperation(chatId, {action: 'push', branch: 'fix/login', base: 'main'});
+      expect(result.state).toBe('pending');
+      const record = [...impl.storage.actions.list()].find((action: any) => action.type === 'action') as any;
+      expect(record.description.pushedCommits).toEqual([COMMIT_2]);
+      expect(record.description.descriptionIsComplete).toBe(false);
+      expect(impl.storage.gitObjectMetadata.get(COMMIT_1).onRemote).toContain(record.gatekeeperId);
+      expect(impl.storage.gitObjectMetadata.get(COMMIT_2).onRemote).not.toContain(record.gatekeeperId);
+      expect(impl.storage.gitObjectMetadata.get(COMMIT_2).pendingPush).toContainEqual({gatekeeperId: record.gatekeeperId, actionId: record.id});
+      expect(JSON.stringify(result)).not.toContain(pack);
+      impl.storage.containsRestrictedData.put(true);
+      await expect(impl.applyPendingAction(record, OWNER, false)).rejects.toThrow('sensitive');
+      expect(calls).toHaveLength(2);
+      impl.storage.containsRestrictedData.put(false);
+      pack = btoa('not a Git pack');
+      await expect(impl.agentGitOperation(chatId, {action: 'push', branch: 'fix/other', base: 'main'})).rejects.toThrow();
+      expect(calls.filter(url => url.includes('/prepare-action'))).toHaveLength(1);
+    });
+  });
+
+  it('queues enterprise Git writes as owner-scoped Gatekeeper actions and denies Ask, collaborators and sensitive pushes', async () => {
+    await withImpl(async impl => {
+      const chatId = 1;
+      impl.storage.chatMeta.put({id: chatId, title: 'Git task', execution: {mode: 'agent', environment: 'rhel10', git: {connectionId: 'owned', repository: 'team/project'}}, started: new Date(), lastActive: new Date()});
+      impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
+      impl.users.get = () => ({getExecutionLaunch: async () => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
+        git: {connectionId: 'owned', providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
+      const calls: any[] = [];
+      impl.env = {...impl.env, AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
+        AETHER_EXECUTION: {fetch: async (url: string, init: RequestInit) => {
+          const request = JSON.parse(String(init.body)); calls.push({url, request}); return Response.json(request.action);
+        }}};
+      await impl.ctx.storage.put('aether.execution.enabled.1', true);
+      const result = await impl.agentGitOperation(chatId, {action: 'pull-request', branch: 'fix/login', base: 'main', title: 'Fix login', body: 'Exact text'});
+      expect(result.state).toBe('pending');
+      expect(JSON.stringify(result)).not.toContain('private-owner-token');
+      expect(calls).toHaveLength(1);
+      expect(calls[0].url).toContain('/prepare-action');
+      expect(calls[0].request.git.repository).toBe('team/project');
+      expect(calls[0].request.action.branch).toMatch(/^aether\/[a-f0-9]{32}\/fix\/login$/);
+      const record = [...impl.storage.actions.list()].find((action: any) => action.type === 'action') as any;
+      expect(record.state).toBe('pending');
+      expect(record.description).toMatchObject({autoApprovable: false, awaitDecision: true, descriptionIsComplete: true});
+      expect(record.description.fields).toContainEqual({kind: 'text', label: 'Body', value: 'Exact text'});
+      expect(JSON.stringify(record)).not.toContain('private-owner-token');
+      expect(impl.consumeCapturedActions(chatId).awaitDecision).toBe(true);
+      const facet = await impl.getGatekeeperFacet(record.gatekeeperId);
+      try {await facet.startSession(); throw new Error('Unexpected access');} catch (error) {expect((error as Error).message).toContain('owner-started');}
+      try {await facet.addObserver('other'); throw new Error('Unexpected access');} catch (error) {expect((error as Error).message).toContain('owner-only');}
+      await expect(impl.applyPendingAction(record, OWNER, true)).rejects.toThrow('owner approval');
+      await facet.rejectAction(result.id);
+      expect((await impl.agentGitOperation(chatId, {action: 'status', id: result.id})).state).toBe('rejected');
+      try {await facet.applyAction(result.id); throw new Error('Unexpected apply');} catch (error) {expect((error as Error).message).toContain('rejected');}
+      impl.storage.containsRestrictedData.put(true);
+      await expect(impl.agentGitOperation(chatId, {action: 'push', branch: 'fix/login', base: 'main'})).rejects.toThrow('sensitive');
+      impl.storage.activeAgents.put({chatId, initiatorUserId: 'collaborator', modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
+      await expect(impl.agentGitOperation(chatId, {action: 'status', id: result.id})).rejects.toThrow('Owner-started');
+      const metadata = impl.storage.chatMeta.get(chatId); metadata.execution.mode = 'ask'; impl.storage.chatMeta.put(metadata);
+      await expect(impl.agentGitOperation(chatId, {action: 'status', id: result.id})).rejects.toThrow('Owner-started');
+      expect(calls).toHaveLength(1);
+    });
+  });
+
   it('offers and executes the real agent tool only for an enabled owner-initiated turn', async () => {
     await withImpl(async impl => {
       const chatId = 1;
@@ -116,7 +197,7 @@ describe('owner-authorized Linux workspace tools', () => {
         fauxAssistantMessage([fauxToolCall('workspace', {action: 'exec', command: 'npm test'})]),
         fauxAssistantMessage([fauxText('Done')]),
       ]);
-      expect(offered[0]).toEqual(['workspace']);
+      expect(offered[0]).toEqual(['git_action', 'workspace']);
       expect(calls.map(call => call.action)).toEqual(['start', 'exec']);
       expect(calls[0].identity).toEqual({username: 'owner', uid: 12345, gid: 23456});
       expect(toolCalls(impl, chatId).find(call => call.toolName === 'workspace')?.output).toContain('tests passed');

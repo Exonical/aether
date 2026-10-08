@@ -4836,6 +4836,11 @@ export type PreApprovableAction = {
  * bindings can be recreated and blueprint metadata can be derived.
  */
 export type GatekeeperCreationSpec = {
+  /** Private owner-only Git approval facet created for a selected Agent chat. */
+  type: 'agentGit';
+  /** The chat whose initial repository selection grants this facet its scope. */
+  chatId: number;
+} | {
   type: "gatekeeper";
   vendorId: string;        // identifies the gatekeeper adapter (e.g. "google")
   resourceUrl: string;

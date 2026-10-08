@@ -35,7 +35,7 @@ export async function executionId(workspaceId: string, chatId: number): Promise<
 }
 
 /** Private controller request used for user-owned Git connections. */
-export async function executionGit<T>(env: Cloudflare.Env, path: 'providers' | 'verify' | 'revoke' | 'rotate' | 'oauth/begin' | 'oauth/exchange' | 'oauth/refresh' | 'oauth/revoke', body?: object): Promise<T> {
+export async function executionGit<T>(env: Cloudflare.Env, path: 'providers' | 'verify' | 'revoke' | 'rotate' | 'oauth/begin' | 'oauth/exchange' | 'oauth/refresh' | 'oauth/revoke' | 'prepare-action' | 'apply-action', body?: object): Promise<T> {
   if (env.AETHER_EXECUTION_ENABLED !== 'true' || !env.AETHER_EXECUTION) throw new Error('Agent environments are disabled');
   const response = await env.AETHER_EXECUTION.fetch(`http://execution/v1/git/${path}`, {
     method: body ? 'POST' : 'GET', headers: {'content-type': 'application/json', 'x-aether-tenant': env.AETHER_EXECUTION_TENANT!},
@@ -46,12 +46,12 @@ export async function executionGit<T>(env: Cloudflare.Env, path: 'providers' | '
 }
 
 /** Calls the private execution controller with a kernel-derived workspace identity. */
-export async function executeWorkspace(env: Cloudflare.Env, id: string, operation: ExecutionOperation, launch?: ExecutionLaunch): Promise<ExecutionResult> {
+export async function executeWorkspace<T = ExecutionResult>(env: Cloudflare.Env, id: string, operation: ExecutionOperation | {action: 'git-snapshot'; base: string}, launch?: ExecutionLaunch): Promise<T> {
   if (env.AETHER_EXECUTION_ENABLED !== 'true' || !env.AETHER_EXECUTION) throw new Error('Linux workspaces are disabled');
   const response = await env.AETHER_EXECUTION.fetch(`http://execution/v1/workspaces/${id}`, {
     method: 'POST', headers: {'content-type': 'application/json', 'x-aether-tenant': env.AETHER_EXECUTION_TENANT!},
     body: JSON.stringify({...operation, ...(operation.action === 'start' ? launch : {})}),
   });
   if (!response.ok) throw new Error(`Linux workspace unavailable (${response.status}). Refresh its status or start it first.`);
-  return response.json<ExecutionResult>();
+  return response.json<T>();
 }

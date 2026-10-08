@@ -1,4 +1,4 @@
-import type {ExecutionOperation, ExecutionResult} from '@gadgets/workshop-shared/execution-workspace';
+import type {ExecutionOperation, ExecutionResult, AgentGitOperation, AgentGitResult} from '@gadgets/workshop-shared/execution-workspace';
 import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AiChatStreamEvent, BlueprintBinding, BlueprintMerge, BlueprintOutput, ChatGadgetPin, ChatGadgetPinRecord, MainlineMergeGadget, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName } from '@gadgets/workshop-shared/api';
 import { applyCodeChange, codeChangeSerializedSize, replaceSpanChange, type CodeContent,
   type CodeChange, type FileChange } from '@gadgets/workshop-shared/code-change';
@@ -518,6 +518,8 @@ export interface AgentHooks {
   executionWorkspaceEnabled?(chatId: number): Promise<boolean>;
   /** Execute a bounded operation under that workspace grant. */
   agentWorkspaceOperation?(chatId: number, operation: ExecutionOperation): Promise<ExecutionResult>;
+  /** Queue an immutable external Git write through the existing Gatekeeper approval lifecycle. */
+  agentGitOperation?(chatId: number, operation: AgentGitOperation): Promise<AgentGitResult>;
   consumeCapturedActions(chatId: number)
       : {actions: number[], accessedGadget: boolean, awaitDecision: boolean} | undefined;
   emitChatStreamEvent(chatId: number, event: AiChatStreamEvent): void;
@@ -3013,8 +3015,8 @@ async function runAgentPass(
 
   const kataAgent = !agentContext.spawnerConfig && await hooks.executionWorkspaceEnabled?.(chatId) === true;
   if (kataAgent) systemPromptSlots = [
-    'You are a coding agent working in the user-selected RHEL 10 Kata environment. Use the workspace tool for shell commands and files. Commands start as the signed-in POSIX user and have sudo inside this isolated environment. The persistent directory is /workspace; a selected Git repository is in /workspace/repository. Inspect the repository, implement the requested changes, run relevant checks, and report results. Git access is read-only and scoped to the selected repository. Never request, print, or store Git credentials. Do not claim to have run a command unless the workspace tool returned its result.',
-    'Only the workspace tool is available in Agent mode. Ask mode handles general chat, documents, slides, sheets, and workerd Gadgets.',
+    'You are a coding agent working in the user-selected RHEL 10 Kata environment. Use the workspace tool for shell commands and files. Commands start as the signed-in POSIX user and have sudo inside this isolated environment. The persistent directory is /workspace; a selected Git repository is in /workspace/repository. Inspect the repository, implement the requested changes, run relevant checks, and report results. Shell Git access is read-only and scoped to the selected repository. You may change local branches and create commits. Use git_action to request an owner-approved push or pull request; never bypass it through the shell. Pushes use immutable snapshots and task branches scoped to this chat. Never request, print, or store Git credentials. Do not claim to have run a command unless the workspace tool returned its result.',
+    'The workspace and git_action tools are available in Agent mode. Ask mode handles general chat, documents, slides, sheets, and workerd Gadgets.',
   ];
 
   // Shared guidance precedes deployment instructions for both agent types.
@@ -3866,7 +3868,33 @@ async function runAgentPass(
     tools = Object.fromEntries(SPAWNED_AGENT_TOOLS.map(name => [name, tools[name]]));
   }
 
-  if (kataAgent) tools = {workspace: tools.workspace};
+  if (kataAgent) {
+    tools.git_action = defineTool({
+      name: 'git_action', label: 'Enterprise Git approval',
+      description: 'Request a push of the current local HEAD or open a pull request in the owner-selected repository. Local branch changes and commits use workspace. Supply a task branch suffix, such as fix/login; the server prefixes it with aether/<chat-id>/. Supply the existing remote base branch, such as main. External writes require owner approval and pause the turn. The captured commit is fixed at submission. Force pushes, merges, branch deletion and cross-repository writes are unavailable. Use status with the returned action id after approval to get the result.',
+      parameters: Type.Object({action: Type.Union(['push', 'pull-request', 'status'].map(value => Type.Literal(value))),
+        branch: Type.Optional(Type.String()), base: Type.Optional(Type.String()), title: Type.Optional(Type.String()),
+        body: Type.Optional(Type.String()), id: Type.Optional(Type.Number())}),
+      execute: async (_toolCallId, input) => {
+        let operation: AgentGitOperation;
+        if (input.action === 'status') {
+          if (!Number.isSafeInteger(input.id) || input.id! < 1) throw new Error('Action id required');
+          operation = {action: 'status', id: input.id!};
+        } else {
+          if (!input.branch || !input.base) throw new Error('Task branch and base required');
+          if (input.action === 'push') operation = {action: 'push', branch: input.branch, base: input.base};
+          else {
+            if (!input.title || input.body === undefined) throw new Error('Title and body required');
+            operation = {action: 'pull-request', branch: input.branch, base: input.base, title: input.title, body: input.body};
+          }
+        }
+        const output = JSON.stringify(await hooks.agentGitOperation!(chatId, operation));
+        return toolResult(output, {output});
+      },
+    });
+    tools = {workspace: tools.workspace, git_action: tools.git_action};
+  }
+
 
   // Calls that reached a tool's execute(), so tool_execution_end can tell the ones pi rejected.
   let executedToolCalls = new Set<string>();

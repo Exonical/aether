@@ -4,7 +4,7 @@ USER 0
 RUN dnf install -y git-core python3 sudo shadow-utils ca-certificates && dnf clean all
 RUN if getent passwd default > /dev/null; then userdel default; fi
 WORKDIR /opt/aether
-COPY runner.mjs bootstrap.mjs ./
+COPY runner.mjs git-actions.mjs bootstrap.mjs ./
 ENTRYPOINT []
 EXPOSE 9006
 CMD ["node", "bootstrap.mjs"]

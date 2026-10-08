@@ -155,12 +155,13 @@ spec:
             - {name: AETHER_EXECUTION_STORAGE_CLASS, value: {{ .Values.execution.storageClassName | quote }}}
             - {name: AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS, value: {{ .Values.execution.idleTimeoutSeconds | quote }}}
             - {name: AETHER_EXECUTION_IMAGE_PULL_SECRETS, value: {{ .Values.imagePullSecrets | toJson | quote }}}
+            - {name: AETHER_EXECUTION_GIT_WRITES, value: {{ .Values.execution.git.allowWrites | quote }}}
             - {name: AETHER_EXECUTION_GIT_PROVIDERS, value: {{ .Values.execution.git.providers | toJson | quote }}}
             - {name: AETHER_EXECUTION_PUBLIC_URL, value: {{ .Values.oidc.publicUrl | quote }}}
             {{- if .Values.execution.git.oauth.existingSecret }}
             - {name: AETHER_EXECUTION_GIT_OAUTH_FILE, value: /etc/aether-git-oauth/clients.json}
             {{- end }}
-            - {name: AETHER_EXECUTION_GIT_URL, value: {{ printf "http://%s-execution-git.%s.svc:9007/" (include "aether.name" .) .Release.Namespace | quote }}}
+            - {name: AETHER_EXECUTION_GIT_URL, value: {{ printf "http://%s-execution-git.%s.svc.%s.:9007/" (include "aether.name" .) .Release.Namespace .Values.networkPolicy.clusterDomain | quote }}}
             {{- if .Values.execution.git.ca.secretName }}
             - {name: NODE_EXTRA_CA_CERTS, value: /etc/aether-git-ca/ca.crt}
             {{- end }}
@@ -170,6 +171,7 @@ spec:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: '1', memory: 256Mi}
           volumeMounts:
+            - {name: execution-git-tmp, mountPath: /tmp}
             - {name: execution-kubernetes, mountPath: /var/run/aether-kubernetes, readOnly: true}
             {{- if .Values.execution.git.oauth.existingSecret }}
             - {name: execution-git-oauth, mountPath: /etc/aether-git-oauth, readOnly: true}
@@ -195,6 +197,8 @@ spec:
             secretName: {{ .Values.execution.git.ca.secretName | quote }}
             items: [{key: {{ .Values.execution.git.ca.key | quote }}, path: ca.crt}]
         {{- end }}
+        - name: execution-git-tmp
+          emptyDir: {sizeLimit: 128Mi}
         - name: execution-kubernetes
           projected:
             defaultMode: 420

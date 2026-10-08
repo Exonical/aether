@@ -1,5 +1,6 @@
-import {chatExecution, executeWorkspace, executionId, executionLaunchKey, type ExecutionLaunch} from './execution-workspace';
-import type {ChatExecutionSelection, ExecutionOperation, ExecutionResult} from '@gadgets/workshop-shared/execution-workspace';
+import type {AgentGitGatekeeper, AgentGitPrepared} from './agent-git-gatekeeper';
+import {chatExecution, executeWorkspace, executionId, executionLaunchKey, executionGit, type ExecutionLaunch} from './execution-workspace';
+import type {ChatExecutionSelection, ExecutionOperation, ExecutionResult, AgentGitOperation, AgentGitResult} from '@gadgets/workshop-shared/execution-workspace';
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionLogEntry, ActionsSubscriber, ActionHistoryFilter, ActionHistoryPage, ChatGadgetPinRecord, MainlineMergeGadget, ChatCodeBase, ChatGadgetPinState, CodeChangeSubmission, CommitInfo, FileAtCommit, MAX_READ_FILES_PER_CALL, TreeNode, MergeChangesResult, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, BlueprintMerge, ApplyBlueprintResult, GadgetUpstream, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
@@ -61,7 +62,7 @@ import {
   buildReleasePack, buildSnapshotRelease, encodeReleaseCommit, releaseMergeHeader,
   releasesMergedBy, type Release,
 } from "./blueprint-release";
-import { encodeGitTree, gitObjectOid, parseGitCommitRefs } from "./git-codec";
+import { decodePackStream, encodeGitTree, gitObjectOid, parseGitCommitRefs } from "./git-codec";
 import {
   listFeaturedBlueprintsFromKv, readBlueprintKvRecord, type BlueprintKvRecord,
 } from "./storage-schema/blueprints-kv";
@@ -336,6 +337,7 @@ function connectionTypeFromCreationSpec(
     case "gatekeeper": return "gatekeeper";
     case "aiModel": return "ai_model";
     case "agentSpawner": return "agent_spawner";
+    case "agentGit": return undefined;
     case "ambient": return undefined;   // auto-provided, not a user-initiated connection
     case undefined: return undefined;
   }
@@ -2476,6 +2478,73 @@ class OverseerImpl implements AgentHooks {
           {title: `Workspace ${operation.action}`, description: 'Read bounded RHEL workspace output.'});
     }
     return result;
+  }
+
+  async agentGitOperation(chatId: number, input: AgentGitOperation): Promise<AgentGitResult> {
+    if (!this.ownerId || !await this.executionWorkspaceEnabled(chatId)) throw new Error('Owner-started Agent workspace required');
+    const selection = this.storage.chatMeta.get(chatId)?.execution?.git;
+    if (!selection) throw new Error('Select a Git repository first');
+    const workspace = await executionId(this.ctx.id.toString(), chatId);
+    const key = `aether.execution.gitgatekeeper.${chatId}`;
+    let gatekeeperId = await this.ctx.storage.get<number>(key);
+    const launch = await this.ownerUserDo().getExecutionLaunch(selection);
+    await this.assertExecutionLaunch(chatId, launch);
+    if (gatekeeperId === undefined || !this.storage.gatekeepers.get(gatekeeperId)) {
+      gatekeeperId = this.allocateWorkpieceId();
+      this.storage.gatekeepers.put({id: gatekeeperId, creationSpec: {type: 'agentGit', chatId},
+        resourceTitle: `Agent Git: ${selection.repository}`, resourceUrl: 'http://agent-git.local/',
+        class: this.ctx.exports.AgentGitGatekeeper({props: {ownerId: this.ownerId, workspace, selection, identity: executionLaunchKey(launch)}})});
+      await this.ctx.storage.put(key, gatekeeperId);
+    }
+    const gatekeeper = await this.getGatekeeperFacet(gatekeeperId) as Fetcher<AgentGitGatekeeper>;
+    if (input.action === 'status') return gatekeeper.status(input.id);
+    if (input.action === 'push' && this.storage.containsRestrictedData.get()) throw new Error('Git pushes are blocked after observing sensitive data');
+    const prefix = `aether/${workspace.slice(0, 32)}/`;
+    const branch = input.branch.startsWith(prefix) ? input.branch : prefix + input.branch;
+    let snapshot: {head: string; pack: string; anchor: string} | undefined;
+    const objects = new Map<string, {type: 'commit' | 'tree' | 'blob' | 'tag'; payload: Uint8Array}>();
+    if (input.action === 'push') {
+      // Decode and bound hostile sandbox bytes before passing them to the private git process.
+      snapshot = await executeWorkspace<{head: string; pack: string; anchor: string}>(this.env, workspace, {action: 'git-snapshot', base: input.base});
+      if (!snapshot || typeof snapshot.pack !== 'string' || snapshot.pack.length > 2796204) throw new Error('Git snapshot too large');
+      const bytes = Uint8Array.from(atob(snapshot.pack), char => char.charCodeAt(0));
+      let total = 0, count = 0;
+      for await (const object of decodePackStream(new ReadableStream({type: 'bytes', start(controller) {controller.enqueue(bytes); controller.close();}}),
+        {maxPackSize: 2097152, maxObjectSize: 2097152, resolveBase: oid => objects.get(oid)})) {
+        total += object.payload.length;
+        if (total > 8388608 || ++count > 4096) throw new Error('Git snapshot too large');
+        objects.set(object.oid, object);
+      }
+    }
+    const prepared = await executionGit<AgentGitPrepared>(this.env, 'prepare-action', {
+      workspace, git: launch.git, action: {...input, branch, ...snapshot},
+    });
+    if (prepared.action === 'push') {
+      // Only the controller-confirmed existing remote anchor gains provenance. New objects stay local.
+      if (!prepared.anchorCommit || prepared.anchorCommit.length > 65536) throw new Error('Remote anchor unavailable');
+      const payload = Uint8Array.from(atob(prepared.anchorCommit), char => char.charCodeAt(0));
+      if (await gitObjectOid('commit', payload) !== prepared.anchor) throw new Error('Remote anchor mismatch');
+      await this.gitCache.importObjects(objects.values());
+      await this.gitCache.putFromGatekeeper(gatekeeperId, 'commit', payload);
+    }
+    const id = await gatekeeper.stage(prepared);
+    try {
+      await this.submitAction(gatekeeperId, id, {
+        title: prepared.action === 'push' ? `Push Agent commit to ${prepared.branch}` : `Open pull request: ${prepared.title}`,
+        description: prepared.action === 'push' ? 'Push the captured commit and pack to this repository. Later sandbox edits are not included.'
+          : 'Open a pull request within the selected enterprise repository. This does not merge it.',
+        fields: [{kind: 'inline', label: 'Repository', value: selection.repository},
+          {kind: 'inline', label: 'Branch', value: prepared.branch}, {kind: 'inline', label: 'Base', value: prepared.base},
+          ...(prepared.action === 'push' ? [{kind: 'inline' as const, label: 'Commit', value: prepared.head!},
+            {kind: 'file' as const, label: 'Captured Git pack', name: 'commits.pack', mediaType: 'application/x-git-packed-objects',
+              size: prepared.size!, sha256: prepared.sha256, origin: 'agent' as const}]
+            : [{kind: 'text' as const, label: 'Title', value: prepared.title!}, {kind: 'text' as const, label: 'Body', value: prepared.body!}])],
+        descriptionIsComplete: prepared.action === 'pull-request',
+        ...(prepared.action === 'push' ? {pushedCommits: [prepared.head!]} : {}),
+        implementsRevert: false, awaitDecision: true, autoApprovable: false,
+      }, {from: 'agent', chatId});
+    } catch (error) {await gatekeeper.rejectAction(id); throw error;}
+    return gatekeeper.status(id);
   }
 
   // Build the agent's executeCode env from the chat's binding map: each name resolves to a
@@ -4762,6 +4831,8 @@ class OverseerImpl implements AgentHooks {
   // was applied automatically. For an auto-approval, `resolvedBy` is the user who enabled the rule.
   async applyPendingAction(record: ActionRecord & {type: "action"},
                            resolvedBy: AiChatAuthorInfo, autoApproved: boolean): Promise<void> {
+    if (this.storage.containsRestrictedData.get() && record.description.pushedCommits?.length) throw new Error('Git pushes are blocked after observing sensitive data');
+    if (autoApproved && this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec?.type === 'agentGit') throw new Error('Agent Git requires owner approval');
     let gatekeeper = await this.getGatekeeperFacet(record.gatekeeperId);
     // The apply-time cache stub is scoped to the gatekeeper AND to this action (approval can
     // happen long after the session that queued it, so the queue-time stub is gone) -- the
@@ -7522,7 +7593,7 @@ class OverseerImpl implements AgentHooks {
       // Singleton gatekeepers (e.g. the Context Library) are auto-provided to every gadget, not
       // user-configured, so they're excluded from blueprints (re-added automatically on open). This
       // also covers an ambient capsule the agent promoted to a named binding via setGadgetBinding.
-      if (gk.creationSpec?.type === "ambient") continue;
+      if (gk.creationSpec?.type === "ambient" || gk.creationSpec?.type === "agentGit") continue;
 
       // Annotation is optional. When absent, the binding is included with an empty
       // description and no resource suggestion. Legacy records may carry an `included:
@@ -10747,6 +10818,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       throw new Error("Observations can't have 'pending' state.");
     }
 
+    if (this.impl.storage.gatekeepers.get(action.gatekeeperId)?.creationSpec?.type === 'agentGit' && !this.isOwner) throw new Error('Only the owner can approve Agent Git actions');
+
     // Resolve the approver's identity before applying, so a failed profile fetch can't leave the
     // action applied in the world but still "pending" in storage.
     let profile = await this.#getClientProfile();
@@ -10915,6 +10988,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
       throw new Error(`Can't reject an observation: ${id}`);
     }
 
+    if (this.impl.storage.gatekeepers.get(action.gatekeeperId)?.creationSpec?.type === 'agentGit' && !this.isOwner) throw new Error('Only the owner can control Agent Git actions');
     let gatekeeper = await this.impl.getGatekeeperFacet(action.gatekeeperId);
 
     // Resolve the rejecter's identity before notifying the gatekeeper, so a failed profile fetch

@@ -21,6 +21,13 @@ test('real Linux runner: git worktree, files, restart persistence, confinement, 
   try {
     const init = await operation({action: 'exec', command: 'git init -q && git config user.email fixture@example.com && git config user.name Fixture && printf original > README.md && git add . && git commit -qm initial'});
     assert.equal(init.exitCode, 0);
+    await operation({action: 'exec', command: 'mkdir repository && git clone -q . repository'});
+    const base = (await operation({action: 'exec', command: 'git -C repository branch --show-current'})).output.trim();
+    const snapshot = await operation({action: 'git-snapshot', base});
+    assert.match(snapshot.head, /^[a-f0-9]{40}$/);
+    assert.equal(Buffer.from(snapshot.pack, 'base64').subarray(0, 4).toString(), 'PACK');
+    await operation({action: 'exec', command: "git -C repository switch -qc local-task && git -C repository config user.email fixture@example.com && git -C repository config user.name Fixture && printf change > repository/README.md && git -C repository add . && git -C repository commit -qm task"});
+    assert.notEqual((await operation({action: 'git-snapshot', base})).head, snapshot.head);
     await operation({action: 'write', path: 'README.md', content: 'edited\n'});
     const diff = await operation({action: 'exec', command: 'git diff -- README.md'});
     assert.match(diff.output, /\+edited/);

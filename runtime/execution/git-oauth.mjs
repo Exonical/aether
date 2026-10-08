@@ -6,7 +6,7 @@ const secret = value => typeof value === 'string' && value.length > 0 && value.l
   && [...value].every(char => char.charCodeAt(0) > 32 && char.charCodeAt(0) !== 127);
 
 /** Private OAuth client: credentials, PKCE verifiers and provider responses never reach runners. */
-export function createGitOAuth({providers = [], clients = {}, publicUrl, request = httpsRequest, now = Date.now}) {
+export function createGitOAuth({providers = [], clients = {}, publicUrl, request = httpsRequest, now = Date.now, allowWrites = false}) {
   const approved = gitProviders(providers);
   const callback = publicUrl ? new URL('/git/callback', publicUrl) : null;
   if (Object.keys(clients).length && (!callback || callback.protocol !== 'https:' || callback.username || callback.password)) throw new Error('Git OAuth requires a public HTTPS application URL');
@@ -58,7 +58,7 @@ export function createGitOAuth({providers = [], clients = {}, publicUrl, request
       const url = new URL(provider.kind === 'gitlab' ? '/oauth/authorize' : '/login/oauth/authorize', provider.url);
       const verifier = provider.kind === 'gitlab' ? randomBytes(32).toString('base64url') : '';
       url.search = new URLSearchParams({client_id: client.clientId, redirect_uri: callback.href, response_type: 'code', state,
-        scope: provider.kind === 'gitlab' ? 'read_user read_repository' : 'repo read:user',
+        scope: provider.kind === 'gitlab' ? `read_user read_repository${allowWrites ? ' api write_repository' : ''}` : 'repo read:user',
         ...(verifier ? {code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256'} : {allow_signup: 'false'})}).toString();
       return {url: url.href, verifier};
     },

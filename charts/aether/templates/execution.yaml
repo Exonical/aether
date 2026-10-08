@@ -1,4 +1,10 @@
 {{- if .Values.execution.enabled }}
+{{- if not .Values.networkPolicy.enabled }}
+{{- fail "Agent execution requires networkPolicy.enabled=true" }}
+{{- end }}
+{{- if .Values.execution.egress }}
+{{- fail "Agent execution.egress must be empty: external writes must pass through Gatekeeper" }}
+{{- end }}
 apiVersion: v1
 kind: Service
 metadata:
@@ -71,8 +77,7 @@ spec:
       toPorts:
         - ports: [{port: '53', protocol: UDP}, {port: '53', protocol: TCP}]
           rules:
-            dns: [{matchPattern: '*'}]
-    {{- with .Values.execution.egress }}
-    {{- toYaml . | nindent 4 }}
-    {{- end }}
+            dns:
+              - matchName: {{ printf "%s-execution-git.%s.svc.%s" (include "aether.name" .) .Release.Namespace .Values.networkPolicy.clusterDomain | quote }}
+
 {{- end }}

@@ -102,3 +102,11 @@ test('OAuth responses fail closed on redirects, missing scopes and token-bearing
     await assert.rejects(() => oauth.exchange({providerId: 'github', code: 'code'}), error => !error.message.includes('secret') && /request failed/.test(error.message));
   } finally {await close(server);}
 });
+
+test('GitLab write scopes are an explicit operator opt-in', () => {
+  const state = 'a'.repeat(64);
+  const readOnly = createGitOAuth({providers, clients, publicUrl: 'https://aether.internal'});
+  const writable = createGitOAuth({providers, clients, publicUrl: 'https://aether.internal', allowWrites: true});
+  assert.equal(new URL(readOnly.begin({providerId: 'gitlab', state}).url).searchParams.get('scope'), 'read_user read_repository');
+  assert.equal(new URL(writable.begin({providerId: 'gitlab', state}).url).searchParams.get('scope'), 'read_user read_repository api write_repository');
+});
