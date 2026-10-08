@@ -156,6 +156,10 @@ spec:
             - {name: AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS, value: {{ .Values.execution.idleTimeoutSeconds | quote }}}
             - {name: AETHER_EXECUTION_IMAGE_PULL_SECRETS, value: {{ .Values.imagePullSecrets | toJson | quote }}}
             - {name: AETHER_EXECUTION_GIT_PROVIDERS, value: {{ .Values.execution.git.providers | toJson | quote }}}
+            - {name: AETHER_EXECUTION_PUBLIC_URL, value: {{ .Values.oidc.publicUrl | quote }}}
+            {{- if .Values.execution.git.oauth.existingSecret }}
+            - {name: AETHER_EXECUTION_GIT_OAUTH_FILE, value: /etc/aether-git-oauth/clients.json}
+            {{- end }}
             - {name: AETHER_EXECUTION_GIT_URL, value: {{ printf "http://%s-execution-git.%s.svc:9007/" (include "aether.name" .) .Release.Namespace | quote }}}
             {{- if .Values.execution.git.ca.secretName }}
             - {name: NODE_EXTRA_CA_CERTS, value: /etc/aether-git-ca/ca.crt}
@@ -167,6 +171,9 @@ spec:
             limits: {cpu: '1', memory: 256Mi}
           volumeMounts:
             - {name: execution-kubernetes, mountPath: /var/run/aether-kubernetes, readOnly: true}
+            {{- if .Values.execution.git.oauth.existingSecret }}
+            - {name: execution-git-oauth, mountPath: /etc/aether-git-oauth, readOnly: true}
+            {{- end }}
             {{- if .Values.execution.git.ca.secretName }}
             - {name: execution-git-ca, mountPath: /etc/aether-git-ca, readOnly: true}
             {{- end }}
@@ -176,6 +183,12 @@ spec:
         {{- end }}
       volumes:
         {{- if .Values.execution.enabled }}
+        {{- if .Values.execution.git.oauth.existingSecret }}
+        - name: execution-git-oauth
+          secret:
+            secretName: {{ .Values.execution.git.oauth.existingSecret | quote }}
+            items: [{key: {{ .Values.execution.git.oauth.key | quote }}, path: clients.json}]
+        {{- end }}
         {{- if .Values.execution.git.ca.secretName }}
         - name: execution-git-ca
           secret:

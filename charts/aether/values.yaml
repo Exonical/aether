@@ -141,4 +141,8 @@ execution:
     ca:
       secretName: ''
       key: ca.crt
+    # JSON map of provider ID -> {clientId, clientSecret}; mounted only in the controller.
+    oauth:
+      existingSecret: ''
+      key: clients.json
   egress: []

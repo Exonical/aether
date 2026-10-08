@@ -122,11 +122,16 @@ for timeout in [-1, 604801, 0.5, "1800", None]:
     render({**execution_values, "execution": {"enabled": True, "idleTimeoutSeconds": timeout}}, valid=False)
 print("Idle suspension defaults, overrides, disabling and invalid settings passed")
 
-execution_values["execution"]["git"] = {"providers": [{"id": "internal", "label": "Internal GitLab", "kind": "gitlab", "url": "https://git.internal"}], "ca": {"secretName": "git-ca"}}
+execution_values["execution"]["git"] = {"providers": [{"id": "internal", "label": "Internal GitLab", "kind": "gitlab", "url": "https://git.internal"}], "ca": {"secretName": "git-ca"}, "oauth": {"existingSecret": "git-oauth", "key": "oauth.json"}}
 docs = render(execution_values)
 pod = state(docs)["spec"]["template"]["spec"]
 manager = next(c for c in pod["containers"] if c["name"] == "execution-manager")
 assert any(m["name"] == "execution-git-ca" for m in manager["volumeMounts"])
+assert any(m["name"] == "execution-git-oauth" and m["readOnly"] for m in manager["volumeMounts"])
+assert {e["name"]: e["value"] for e in manager["env"]}["AETHER_EXECUTION_PUBLIC_URL"] == "https://acme.example"
+assert {e["name"]: e["value"] for e in manager["env"]}["AETHER_EXECUTION_GIT_OAUTH_FILE"] == "/etc/aether-git-oauth/clients.json"
+assert next(v for v in pod["volumes"] if v["name"] == "execution-git-oauth")["secret"] == {"secretName": "git-oauth", "items": [{"key": "oauth.json", "path": "clients.json"}]}
+assert not any(m["name"] == "execution-git-oauth" for c in pod["containers"] if c["name"] != "execution-manager" for m in c.get("volumeMounts", []))
 assert not any(m["name"] == "execution-git-ca" for c in pod["containers"] if c["name"] != "execution-manager" for m in c.get("volumeMounts", []))
 broker = next(d for d in docs if d["kind"] == "Service" and d["metadata"]["name"].endswith("execution-git"))
 assert broker["spec"].get("type", "ClusterIP") == "ClusterIP"

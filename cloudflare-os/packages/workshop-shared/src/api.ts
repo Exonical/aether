@@ -427,6 +427,10 @@ export interface AuthenticatedApi extends RpcTarget {
   getExecutionProfile(): Promise<import('./execution-workspace').ExecutionProfile>;
   /** Verify and privately store a Git token for an operator-approved provider. */
   linkGitConnection(providerId: string, token: string): Promise<import('./execution-workspace').GitConnection>;
+  /** Start an OAuth link on an administrator-approved self-hosted Git service. */
+  beginGitOAuth(providerId: string): Promise<import('./execution-workspace').GitOAuthStart>;
+  /** Consume the caller's one-use OAuth state and privately store the verified Git grant. */
+  completeGitOAuth(state: string, code: string): Promise<import('./execution-workspace').GitConnection>;
   /** Remove the caller's connection and revoke its outstanding repository leases. */
   removeGitConnection(connectionId: string): Promise<void>;
 
