@@ -23,9 +23,9 @@ and credentials on each instance. Browsers must trust both services' certificate
 | GitHub Enterprise Server | OAuth App with the exact callback URL | `repo read:user` | Confidential authorization-code flow with client secret and state; standard GHES OAuth App tokens |
 
 GitHub Enterprise Server's OAuth App flow does not support PKCE. Its `repo` scope
-includes read/write access and is broader than Aether's current read-only broker.
+includes read/write access and is broader than Aether's repository-scoped broker.
 The token stays private, and runners can only use upload-pack for the selected
-repository; push and arbitrary repository URLs remain blocked. Fine-grained
+repository. Shell pushes and arbitrary repository URLs remain blocked; approved pushes use the separate Gatekeeper write path. Fine-grained
 GitHub App installation permissions are a future integration, not this OAuth App
 flow. Organizations may require administrator approval of the OAuth application.
 
@@ -139,3 +139,5 @@ provider-side revocation automatically.
 Protocol fixtures cover both providers, and real workerd tests cover user
 isolation, replay, refresh, disconnect and native RPC. Tests do not replace a live
 connection against your licensed GitLab/GHES instance and internal TLS chain.
+
+For owner-approved Agent pushes and PRs, see [Agent security](agent-security.md). GitLab write mode adds `api` and `write_repository`; reconnect after enabling it.
