@@ -1,0 +1,78 @@
+{{- define "aether.networkpolicy" -}}
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  namespace: {{ .Release.Namespace | quote }}
+  name: {{ include "aether.name" . }}
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels: {{- include "aether.selector" . | nindent 6 }}
+  policyTypes: [Ingress, Egress]
+  {{- if .Values.networkPolicy.allowSameNamespace }}
+  ingress:
+    - from:
+        - podSelector: {}
+      ports:
+        - {protocol: TCP, port: 8080}
+  {{- else }}
+  ingress: []
+  {{- end }}
+  egress: []
+{{- $egress := .Values.networkPolicy.extraEgress }}
+{{- $hasAdapters := false }}
+{{- range $key := list "s3" "postgres" "models" "oidc" }}
+{{- $adapter := index $.Values $key }}
+{{- if $adapter.enabled }}
+{{- $hasAdapters = true }}
+{{- $egress = concat $egress $adapter.egress }}
+{{- end }}
+{{- end }}
+{{- if or .Values.gateway.enabled $hasAdapters $egress }}
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  namespace: {{ .Release.Namespace | quote }}
+  name: {{ include "aether.name" . }}
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  endpointSelector:
+    matchLabels: {{- include "aether.selector" . | nindent 6 }}
+  {{- if .Values.gateway.enabled }}
+  ingress:
+    - fromEntities: [ingress]
+      toPorts:
+        - ports:
+            - {port: "8080", protocol: TCP}
+  {{- end }}
+  {{- if or $hasAdapters $egress }}
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports:
+            - {port: "53", protocol: UDP}
+            - {port: "53", protocol: TCP}
+          rules:
+            dns:
+              - matchPattern: "*"
+    {{- with $egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+  {{- end }}
+{{- end }}
+{{- end }}
+
+{{- end -}}
+
+{{- range $tenant := .Values.tenants }}
+{{- $values := mergeOverwrite (deepCopy $.Values) (deepCopy $tenant) }}
+{{- $release := mergeOverwrite (deepCopy $.Release) (dict "Name" (printf "%s-%s" $.Release.Name $tenant.tenantId) "Namespace" $tenant.namespace) }}
+{{- $ctx := dict "Values" $values "Release" $release "Chart" $.Chart "Capabilities" $.Capabilities }}
+---
+{{ include "aether.networkpolicy" $ctx }}
+{{ end }}

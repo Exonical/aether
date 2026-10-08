@@ -1,0 +1,29 @@
+{{- define "aether.service" -}}
+{{- range $headless := list false true }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  namespace: {{ $.Release.Namespace | quote }}
+  name: {{ include "aether.name" $ }}{{ if $headless }}-headless{{ end }}
+  labels: {{- include "aether.labels" $ | nindent 4 }}
+spec:
+  {{- if $headless }}
+  clusterIP: None
+  {{- end }}
+  selector: {{- include "aether.selector" $ | nindent 4 }}
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+{{- end }}
+
+{{- end -}}
+
+{{- range $tenant := .Values.tenants }}
+{{- $values := mergeOverwrite (deepCopy $.Values) (deepCopy $tenant) }}
+{{- $release := mergeOverwrite (deepCopy $.Release) (dict "Name" (printf "%s-%s" $.Release.Name $tenant.tenantId) "Namespace" $tenant.namespace) }}
+{{- $ctx := dict "Values" $values "Release" $release "Chart" $.Chart "Capabilities" $.Capabilities }}
+---
+{{ include "aether.service" $ctx }}
+{{ end }}

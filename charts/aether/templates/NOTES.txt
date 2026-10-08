@@ -1,0 +1,7 @@
+Aether tenant fleet managed by Helm release {{ .Release.Name }}.
+{{ range .Values.tenants }}
+Tenant {{ .tenantId }}: namespace {{ .namespace }}
+{{ end }}
+Check each tenant: kubectl -n <tenant-namespace> get statefulsets,pods,httproutes
+Keep exactly one active pod per tenant. Tenant namespaces and state PVCs are retained.
+Chart settings do not rebuild tenant-specific workspace images.

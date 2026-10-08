@@ -1,0 +1,173 @@
+{{- define "aether.statefulset" -}}
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  namespace: {{ .Release.Namespace | quote }}
+  name: {{ include "aether.name" . }}
+  labels: {{- include "aether.labels" . | nindent 4 }}
+spec:
+  serviceName: {{ include "aether.name" . }}-headless
+  replicas: 1
+  persistentVolumeClaimRetentionPolicy:
+    whenDeleted: Retain
+    whenScaled: Retain
+  selector:
+    matchLabels: {{- include "aether.selector" . | nindent 6 }}
+  template:
+    metadata:
+      labels: {{- include "aether.selector" . | nindent 8 }}
+      {{- with .Values.podAnnotations }}
+      annotations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+    spec:
+      automountServiceAccountToken: false
+      terminationGracePeriodSeconds: 30
+      {{- with .Values.runtimeClassName }}
+      runtimeClassName: {{ . | quote }}
+      {{- end }}
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.nodeSelector }}
+      nodeSelector: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.tolerations }}
+      tolerations: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- with .Values.affinity }}
+      affinity: {{- toYaml . | nindent 8 }}
+      {{- end }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 10001
+        runAsGroup: 10001
+        fsGroup: 10001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: workerd
+          image: {{ include "aether.image" .Values.image | quote }}
+          imagePullPolicy: {{ .Values.image.pullPolicy }}
+          args:
+            - serve
+            - {{ printf "/opt/aether/workspace%s%s.capnp.bin" (ternary "-postgres" "" .Values.postgres.enabled) (ternary "-s3" "" .Values.s3.enabled) | quote }}
+            - --binary
+            - --experimental
+            - --socket-addr=http=0.0.0.0:8080
+            - --directory-path=aether:assets-disk=/opt/aether/assets
+            - --directory-path=aether:do-storage=/var/lib/aether/do
+            - --directory-path=kv:storage=/var/lib/aether/kv
+            - --directory-path=r2:storage=/var/lib/aether/r2
+          env:
+            - name: AETHER_ADMINS
+              value: {{ .Values.admins | toJson | quote }}
+            {{- if .Values.oidc.enabled }}
+            - name: AETHER_PUBLIC_URL
+              value: {{ .Values.oidc.publicUrl | quote }}
+            - name: AETHER_OIDC_DISPLAY_NAME
+              value: {{ .Values.oidc.displayName | quote }}
+            - name: AETHER_OIDC_SESSION_TTL
+              value: {{ .Values.oidc.sessionTtl | quote }}
+            {{- end }}
+          ports:
+            - name: http
+              containerPort: 8080
+          securityContext: {{- include "aether.containerSecurity" . | nindent 12 }}
+          resources: {{- toYaml .Values.resources | nindent 12 }}
+          startupProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            httpGet: {path: /readyz, port: http}
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: {path: /healthz, port: http}
+            periodSeconds: 10
+          volumeMounts:
+            - {name: state, mountPath: /var/lib/aether}
+            - {name: tmp, mountPath: /tmp}
+        {{- range $key := list "s3" "postgres" "models" "oidc" }}
+        {{- $adapter := index $.Values $key }}
+        {{- if $adapter.enabled }}
+        {{- $port := index (dict "s3" 9001 "postgres" 9002 "models" 9003 "oidc" 9004) $key }}
+        {{- $ready := ternary "readyz" "healthz" (has $key (list "postgres" "oidc")) }}
+        - name: {{ $key }}-adapter
+          image: {{ include "aether.image" $adapter.image | quote }}
+          imagePullPolicy: {{ $adapter.image.pullPolicy }}
+          env:
+            - name: AETHER_TENANT_ID
+              value: {{ $.Values.tenantId | quote }}
+            - name: {{ index (dict "s3" "AETHER_S3_PORT" "postgres" "AETHER_PG_ADAPTER_PORT" "models" "AETHER_MODEL_PORT" "oidc" "AETHER_OIDC_PORT") $key }}
+              value: {{ $port | quote }}
+            {{- if eq $key "oidc" }}
+            - name: AETHER_PUBLIC_URL
+              value: {{ $.Values.oidc.publicUrl | quote }}
+            {{- end }}
+            {{- if $adapter.ca.secretName }}
+            - name: {{ index (dict "s3" "AETHER_S3_CA_FILE" "postgres" "AETHER_PG_CA_FILE" "models" "AETHER_MODEL_CA_FILE" "oidc" "AETHER_OIDC_CA_FILE") $key }}
+              value: /etc/aether-ca/ca.crt
+            {{- end }}
+          envFrom:
+            - secretRef:
+                name: {{ $adapter.existingSecret | quote }}
+          securityContext: {{- include "aether.containerSecurity" $ | nindent 12 }}
+          resources: {{- toYaml $adapter.resources | nindent 12 }}
+          startupProbe:
+            exec:
+              command: [node, -e, {{ printf "fetch('http://127.0.0.1:%v/%s').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" $port $ready | quote }}]
+            periodSeconds: 2
+            failureThreshold: 30
+          readinessProbe:
+            exec:
+              command: [node, -e, {{ printf "fetch('http://127.0.0.1:%v/%s').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" $port $ready | quote }}]
+            periodSeconds: 5
+          livenessProbe:
+            exec:
+              command: [node, -e, {{ printf "fetch('http://127.0.0.1:%v/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" $port | quote }}]
+            periodSeconds: 10
+          {{- if $adapter.ca.secretName }}
+          volumeMounts:
+            - name: {{ $key }}-ca
+              mountPath: /etc/aether-ca
+              readOnly: true
+          {{- end }}
+        {{- end }}
+        {{- end }}
+      volumes:
+        - name: tmp
+          emptyDir:
+            sizeLimit: 128Mi
+        {{- range $key := list "s3" "postgres" "models" "oidc" }}
+        {{- $adapter := index $.Values $key }}
+        {{- if and $adapter.enabled $adapter.ca.secretName }}
+        - name: {{ $key }}-ca
+          secret:
+            secretName: {{ $adapter.ca.secretName | quote }}
+            items:
+              - key: {{ $adapter.ca.key | quote }}
+                path: ca.crt
+        {{- end }}
+        {{- end }}
+  volumeClaimTemplates:
+    - metadata:
+        name: state
+      spec:
+        accessModes: [{{ .Values.persistence.accessMode | quote }}]
+        {{- if ne .Values.persistence.storageClassName nil }}
+        storageClassName: {{ .Values.persistence.storageClassName | quote }}
+        {{- end }}
+        resources:
+          requests:
+            storage: {{ .Values.persistence.size | quote }}
+
+{{- end -}}
+
+{{- range $tenant := .Values.tenants }}
+{{- $values := mergeOverwrite (deepCopy $.Values) (deepCopy $tenant) }}
+{{- $release := mergeOverwrite (deepCopy $.Release) (dict "Name" (printf "%s-%s" $.Release.Name $tenant.tenantId) "Namespace" $tenant.namespace) }}
+{{- $ctx := dict "Values" $values "Release" $release "Chart" $.Chart "Capabilities" $.Capabilities }}
+---
+{{ include "aether.statefulset" $ctx }}
+{{ end }}

@@ -68,3 +68,5 @@ Preserve `state-aether-0`, the namespace identity in `runtime/aether.capnp`, and
 The image has a read-only root filesystem, non-root UID/GID 10001, no Linux capabilities, a seccomp profile, and writable mounts only for SQLite state and temporary files. Resource limits are starter values; set them from workload measurements when the Workshop is integrated.
 
 The [`workspace-oidc` overlay](overlays/workspace-oidc) adds generic OIDC to the PostgreSQL, S3, model, and Cilium Gateway API example. Build with `AETHER_OIDC=true` and follow the [provider and local Keycloak guide](../../docs/oidc.md). Configure a client and issuer policy per tenant.
+
+For a single Helm release managing multiple tenant workspaces, use the [Aether Helm chart](../../charts/aether/README.md). Existing Kustomize deployments require explicit ownership and state migration planning.

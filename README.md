@@ -59,6 +59,14 @@ The fixed Worker probe reports successful loading and denied ambient network acc
 
 The runtime exposes diagnostic endpoints without authentication. Keep it private. It accepts only the bundled diagnostic module, not arbitrary user code.
 
+## Deploy multiple tenants with Helm
+
+The [Helm chart](charts/aether/README.md) manages a tenant fleet with one release. Each tenant gets its own namespace, runtime pod, PVC, credentials, Cilium policies and optional Gateway API route. PostgreSQL, S3, OIDC and model services are user-provided. Customize the example before installing:
+
+```sh
+helm upgrade --install aether charts/aether --namespace aether-system --create-namespace -f my-fleet.yaml --wait
+```
+
 ## Deploy the runtime to Kubernetes
 
 [Deployment instructions](deploy/kubernetes/README.md) cover building an image, selecting your registry and CSI storage, and applying the base or Kata overlay. The manifests create one StatefulSet replica, a persistent volume, HTTP probes, and a policy denying outbound network access. They expose a ClusterIP service; no public ingress is installed.

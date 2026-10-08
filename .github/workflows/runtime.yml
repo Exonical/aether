@@ -5,6 +5,17 @@ on:
 permissions:
   contents: read
 jobs:
+  helm:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.0
+      - run: python3 -m pip install PyYAML==6.0.3
+      - run: helm lint charts/aether --strict -f charts/aether/examples/production.yaml
+      - run: python3 charts/aether/tests/render.py
+      - run: helm package charts/aether --destination /tmp
   runtime:
     runs-on: ubuntu-24.04
     steps:
