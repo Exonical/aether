@@ -1,0 +1,64 @@
+{{- if .Values.execution.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "aether.name" . }}-execution
+  namespace: {{ .Release.Namespace | quote }}
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "aether.name" . }}-execution
+  namespace: {{ .Release.Namespace | quote }}
+rules:
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [get, create, delete]
+  - apiGroups: ['']
+    resources: [pods/proxy]
+    verbs: [create]
+  - apiGroups: ['']
+    resources: [persistentvolumeclaims]
+    verbs: [get, list, create]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "aether.name" . }}-execution
+  namespace: {{ .Release.Namespace | quote }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "aether.name" . }}-execution
+    namespace: {{ .Release.Namespace | quote }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "aether.name" . }}-execution
+---
+apiVersion: cilium.io/v2
+kind: CiliumNetworkPolicy
+metadata:
+  name: {{ include "aether.name" . }}-execution-workspaces
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  endpointSelector:
+    matchLabels:
+      aether.dev/execution: {{ .Values.tenantId | quote }}
+  ingress:
+    - fromEntities: [kube-apiserver]
+      toPorts:
+        - ports: [{port: '9006', protocol: TCP}]
+  egress:
+    - toEndpoints:
+        - matchLabels:
+            k8s:io.kubernetes.pod.namespace: kube-system
+            k8s:k8s-app: kube-dns
+      toPorts:
+        - ports: [{port: '53', protocol: UDP}, {port: '53', protocol: TCP}]
+          rules:
+            dns: [{matchPattern: '*'}]
+    {{- with .Values.execution.egress }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+{{- end }}

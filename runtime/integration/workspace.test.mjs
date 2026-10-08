@@ -22,6 +22,7 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
   const origin = `http://127.0.0.1:${port}`;
   let child;
   let postgresAdapter, postgresPort;
+  let executionFixture;
   let output = "";
   let starts = 0;
   async function stop() {
@@ -35,6 +36,7 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     output = "";
     child = spawn(process.execPath, [join(root, "run-workspace.mjs")], {
       env: { ...process.env, AETHER_STATE_DIR: state, AETHER_PORT: String(port), AETHER_ADMINS: '["admin"]',
+        AETHER_EXECUTION_ENABLED: executionFixture ? 'true' : 'false',
         ...(postgresPort ? { AETHER_PG_ADAPTER_PORT: String(postgresPort) } : {}),
         ...(starts++ === 0 && process.env.AETHER_TEST_PREVIOUS_BUILD_DIR
           ? { AETHER_BUILD_DIR: process.env.AETHER_TEST_PREVIOUS_BUILD_DIR } : {}),
@@ -57,6 +59,10 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     try { return await callback(api); } finally { api[Symbol.dispose](); }
   }
   try {
+    if (process.env.AETHER_TEST_EXECUTION === 'true') {
+      const {createExecutionFixture} = await import('../execution/test/fixture.mjs');
+      executionFixture = await createExecutionFixture(join(state, 'linux'));
+    }
     if (process.env.AETHER_KV_STORAGE === "postgres") {
       const { createAdapter } = await import("../postgres/server.mjs");
       const { readConfig } = await import("../postgres/config.mjs");
@@ -134,11 +140,32 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     assert.equal((await rpc(api => api.authenticate(login).newGadgetFromBlueprint("format.document", {}).getMetadata())).title, "Workspace Docs");
     const manifest = JSON.parse(await readFile(join(root, "dist/workspace/manifest.json"), "utf8"));
     assert.deepEqual(manifest.workers, ["router", "workshop-backend", "gatekeeper-context", "gatekeeper-scheduler"]);
+    if (executionFixture) {
+      const operation = body => rpc(api => api.authenticate(login).openGadget(workspace.id).executionWorkspace(body));
+      assert.equal((await operation({action: 'start'})).state, 'ready');
+      assert.equal((await operation({action: 'exec', command: 'git init -q && printf initial > README.md && git add . && git -c user.name=Fixture -c user.email=fixture@example.com commit -qm initial'})).exitCode, 0);
+      await operation({action: 'write', path: 'README.md', content: 'agent workspace\n'});
+      assert.match((await operation({action: 'exec', command: 'git diff -- README.md'})).output, /\+agent workspace/);
+      await operation({action: 'suspend'});
+      await assert.rejects(operation({action: 'exec', command: 'echo denied'}), /start/i);
+      await operation({action: 'start'});
+      assert.equal((await operation({action: 'read', path: 'README.md'})).content, 'agent workspace\n');
+      await assert.rejects(rpc(api => api.authenticate(otherToken).openGadget(workspace.id).executionWorkspace({action: 'status'})), /access|permission|not found/i);
+      // Explicit sharing still cannot grant another user direct Linux control.
+      await rpc(api => api.authenticate(otherToken).provisionAmbientAccount('context'));
+      await rpc(api => api.authenticate(otherToken).provisionAmbientAccount('scheduler'));
+      const link = await rpc(api => api.authenticate(login).openGadget(workspace.id).createShareLink('build'));
+      await assert.rejects(rpc(api => api.authenticate(otherToken).openGadget(workspace.id, link.key).executionWorkspace({action: 'exec', command: 'echo denied'})), /owner/i);
+      const calls = executionFixture.calls.length;
+      await assert.rejects(rpc(api => api.authenticate('forged').openGadget(workspace.id).executionWorkspace({action: 'start'})), /session|token|auth/i);
+      assert.equal(executionFixture.calls.length, calls);
+    }
   } catch (error) {
     error.message += `\nNative workspace logs:\n${output}`;
     throw error;
   } finally {
     await stop();
+    if (executionFixture) await executionFixture.close();
     if (postgresAdapter) {
       postgresAdapter.closeAllConnections();
       await new Promise(resolve => postgresAdapter.close(resolve));

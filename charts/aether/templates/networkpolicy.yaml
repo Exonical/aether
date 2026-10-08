@@ -28,7 +28,7 @@ spec:
 {{- $egress = concat $egress $adapter.egress }}
 {{- end }}
 {{- end }}
-{{- if or .Values.gateway.enabled $hasAdapters $egress }}
+{{- if or .Values.gateway.enabled $hasAdapters $egress .Values.execution.enabled }}
 ---
 apiVersion: cilium.io/v2
 kind: CiliumNetworkPolicy
@@ -46,7 +46,7 @@ spec:
         - ports:
             - {port: "8080", protocol: TCP}
   {{- end }}
-  {{- if or $hasAdapters $egress }}
+  {{- if or $hasAdapters $egress .Values.execution.enabled }}
   egress:
     - toEndpoints:
         - matchLabels:
@@ -59,6 +59,11 @@ spec:
           rules:
             dns:
               - matchPattern: "*"
+    {{- if .Values.execution.enabled }}
+    - toEntities: [kube-apiserver]
+      toPorts:
+        - ports: [{port: "443", protocol: TCP}, {port: "6443", protocol: TCP}]
+    {{- end }}
     {{- with $egress }}
     {{- toYaml . | nindent 4 }}
     {{- end }}

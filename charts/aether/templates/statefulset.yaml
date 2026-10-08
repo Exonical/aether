@@ -20,6 +20,9 @@ spec:
       {{- end }}
     spec:
       automountServiceAccountToken: false
+      {{- if .Values.execution.enabled }}
+      serviceAccountName: {{ include "aether.name" . }}-execution
+      {{- end }}
       terminationGracePeriodSeconds: 30
       {{- with .Values.runtimeClassName }}
       runtimeClassName: {{ . | quote }}
@@ -59,6 +62,8 @@ spec:
             - --directory-path=kv:storage=/var/lib/aether/kv
             - --directory-path=r2:storage=/var/lib/aether/r2
           env:
+            - name: AETHER_EXECUTION_ENABLED
+              value: {{ .Values.execution.enabled | quote }}
             - name: AETHER_DEPARTMENTS
               value: {{ .Values.departments.enabled | quote }}
             - name: AETHER_ADMINS
@@ -136,7 +141,37 @@ spec:
           {{- end }}
         {{- end }}
         {{- end }}
+        {{- if .Values.execution.enabled }}
+        - name: execution-manager
+          image: {{ include "aether.image" .Values.execution.managerImage | quote }}
+          imagePullPolicy: {{ .Values.execution.managerImage.pullPolicy }}
+          securityContext: {{- include "aether.containerSecurity" . | nindent 12 }}
+          env:
+            - {name: AETHER_TENANT_ID, value: {{ .Values.tenantId | quote }}}
+            - {name: AETHER_EXECUTION_NAMESPACE, value: {{ .Release.Namespace | quote }}}
+            - {name: AETHER_EXECUTION_IMAGE, value: {{ include "aether.image" .Values.execution.runnerImage | quote }}}
+            - {name: AETHER_EXECUTION_RUNTIME_CLASS, value: {{ .Values.execution.runtimeClassName | quote }}}
+            - {name: AETHER_EXECUTION_STORAGE_CLASS, value: {{ .Values.execution.storageClassName | quote }}}
+          resources:
+            requests: {cpu: 100m, memory: 128Mi}
+            limits: {cpu: '1', memory: 256Mi}
+          volumeMounts:
+            - {name: execution-kubernetes, mountPath: /var/run/aether-kubernetes, readOnly: true}
+          readinessProbe:
+            exec:
+              command: [node, -e, "fetch('http://127.0.0.1:9005/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+        {{- end }}
       volumes:
+        {{- if .Values.execution.enabled }}
+        - name: execution-kubernetes
+          projected:
+            defaultMode: 420
+            sources:
+              - serviceAccountToken: {path: token, expirationSeconds: 3600}
+              - configMap:
+                  name: kube-root-ca.crt
+                  items: [{key: ca.crt, path: ca.crt}]
+        {{- end }}
         - name: tmp
           emptyDir:
             sizeLimit: 128Mi

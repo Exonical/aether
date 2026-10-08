@@ -25,3 +25,7 @@
 {{- if and .Values.departments.enabled (not .Values.oidc.enabled) -}}
 {{- fail "departments.enabled requires oidc.enabled" -}}
 {{- end -}}
+
+{{- if and .Values.execution.enabled (or (not .Values.oidc.enabled) (not .Values.departments.enabled) (not .Values.networkPolicy.enabled)) }}
+{{- fail "execution requires OIDC, departments, and networkPolicy" }}
+{{- end }}
