@@ -51,4 +51,6 @@ CI lints/packages the chart and checks all 16 adapter combinations, storage, pri
 
 See the [Ask and Agent guide](../../docs/agent-workspaces.md) for composer controls, the optional `execution.enabled` controller, trusted OIDC UID/GID claims, per-user Git links and retained per-chat runner PVCs. Ask defaults to workerd. Agent uses RHEL 10 and in-container sudo. Execution requires OIDC departments, Cilium network policies, and a configured Kata runtime. Build and publish both execution images before enabling it.
 
+For GitLab Self-Managed or GitHub Enterprise Server OAuth, configure the approved internal origins and `execution.git.oauth.existingSecret`. The Secret contains a provider-ID map of client credentials and mounts only in the controller. See [Enterprise Git OAuth](../../docs/enterprise-git-oauth.md) for callback registration, internal CA/egress settings and token lifecycle. Public GitHub/GitLab origins are rejected.
+
 Agent runner pods suspend after 30 idle minutes by default. `execution.idleTimeoutSeconds` accepts 0 (disabled) through 604800 (seven days). Starts and shell/file operations renew the deadline; status polling does not. PVCs survive suspension, and the next Agent turn resumes the workspace. The controller needs namespace-scoped pod list/patch permissions to reconcile activity across restarts.

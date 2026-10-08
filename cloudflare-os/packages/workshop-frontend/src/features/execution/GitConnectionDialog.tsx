@@ -3,6 +3,7 @@ import {Button, Dialog, DropdownMenu, Input} from '@cloudflare/kumo';
 import type {RpcStub} from 'capnweb';
 import type {AuthenticatedApi} from '@gadgets/workshop-shared/api';
 import type {ExecutionProfile, GitRepositorySelection} from '@gadgets/workshop-shared/execution-workspace';
+import {openGitOAuth} from './gitOAuth';
 
 export const GitConnectionDialog = ({api, profile, selection, onProfileChange, onSelect, onClose}: {
   api: RpcStub<AuthenticatedApi>;
@@ -19,7 +20,9 @@ export const GitConnectionDialog = ({api, profile, selection, onProfileChange, o
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const mounted = useRef(true);
-  useEffect(() => {mounted.current = true; return () => {mounted.current = false;};}, []);
+  const oauth = useRef<ReturnType<typeof openGitOAuth> | null>(null);
+  useEffect(() => {mounted.current = true; return () => {mounted.current = false; oauth.current?.cancel();};}, []);
+  const provider = profile.providers.find(item => item.id === providerId);
   const connection = profile.connections.find(item => item.id === connectionId);
   const perform = async (operation: () => Promise<void>) => {
     setBusy(true); setError('');
@@ -54,9 +57,21 @@ export const GitConnectionDialog = ({api, profile, selection, onProfileChange, o
             <DropdownMenu.Trigger render={<Button disabled={busy}>{profile.providers.find(item => item.id === providerId)?.label ?? 'Choose Git service'}</Button>} />
             <DropdownMenu.Content>{profile.providers.map(item => <DropdownMenu.Item key={item.id} onClick={() => setProviderId(item.id)}>{item.label}</DropdownMenu.Item>)}</DropdownMenu.Content>
           </DropdownMenu>
+          {provider?.oauth ? <>
+            <p className="text-xs text-kumo-subtle">Authorize your account on {provider.label}. Credentials stay outside the environment.</p>
+            {provider.kind === 'github' && <p className="text-xs text-kumo-subtle">GitHub Enterprise OAuth grants the repo scope. Aether's environment broker permits repository reads only.</p>}
+            <Button type="button" disabled={busy} onClick={() => void perform(async () => {
+              oauth.current = openGitOAuth(api, providerId);
+              const linkedId = await oauth.current.finished;
+              const updated = await api.getExecutionProfile();
+              if (!mounted.current) return;
+              onProfileChange(updated); setConnectionId(linkedId);
+            })}>Connect {provider.label}</Button>
+          </> : <>
           <Input label="Personal access token" type="password" autoComplete="off" value={token} disabled={busy} onChange={event => setToken(event.target.value)} />
           <p className="text-xs text-kumo-subtle">Use a token limited to reading your repositories and identifying your account. It is stored privately and kept out of the environment.</p>
           <Button type="submit" disabled={busy || !providerId || !token.trim()}>Link account</Button>
+          </>}
         </> : <p className="text-sm text-kumo-subtle">Your administrator has not configured any Git services.</p>}
       </form>
       {error && <p role="alert" className="text-sm text-kumo-danger">{error}</p>}
