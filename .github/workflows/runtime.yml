@@ -123,8 +123,8 @@ jobs:
         run: |
           pnpm --dir cloudflare-os/packages/workshop-backend --pm-on-fail=ignore exec tsc --noEmit
           pnpm --dir cloudflare-os/packages/workshop-frontend --pm-on-fail=ignore exec tsc --noEmit
-          pnpm --dir cloudflare-os/packages/workshop-backend --pm-on-fail=ignore exec vitest run __tests__/spawned-agent-tools.test.ts
-          pnpm --dir cloudflare-os/packages/workshop-frontend --pm-on-fail=ignore exec vitest run src/features/execution/ComposerExecutionControls.test.tsx src/features/chat/composer/ChatComposer.test.tsx
+          pnpm --dir cloudflare-os/packages/workshop-backend --pm-on-fail=ignore exec vitest run __tests__/spawned-agent-tools.test.ts __tests__/git-connections.test.ts
+          pnpm --dir cloudflare-os/packages/workshop-frontend --pm-on-fail=ignore exec vitest run src/features/execution/ComposerExecutionControls.test.tsx src/features/execution/GitConnectionDialog.test.tsx src/features/execution/GitOAuthCallback.test.tsx src/features/execution/gitOAuth.test.ts src/features/chat/composer/ChatComposer.test.tsx
       - name: Build Linux workspace images
         run: |
           docker build -f runtime/execution/Dockerfile.runner -t aether-runner:ci runtime/execution

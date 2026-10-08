@@ -14,6 +14,7 @@ import AppShell from '../components/AppShell/AppShell'
 import LoginPage from '../LoginPage'
 import OnboardingWizard from '../OnboardingWizard'
 import AccountSelectionModal from '../components/billing/AccountSelectionModal'
+import {GIT_OAUTH_CALLBACK_PATH} from '../features/execution/gitOAuth'
 
 export const Route = createRootRoute({
   component: RootComponent,
@@ -109,6 +110,7 @@ function RootComponent() {
   // authenticatedApi is guaranteed non-null here: isLoading, error, and
   // !isAuthenticated branches all return early above.
   if (!authenticatedApi) return null
+  if (pathname === GIT_OAUTH_CALLBACK_PATH) return <AuthProvider authenticatedApi={authenticatedApi} onLogout={logout}><Outlet /></AuthProvider>
   return (
     <AuthProvider authenticatedApi={authenticatedApi} onLogout={logout}>
       <FeatureFlagsProvider>

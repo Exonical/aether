@@ -1,5 +1,6 @@
-import type {ExecutionProfile, GitConnection, GitProvider, GitRepositorySelection} from '@gadgets/workshop-shared/execution-workspace';
+import type {ExecutionProfile, GitConnection, GitOAuthStart, GitProvider, GitRepositorySelection} from '@gadgets/workshop-shared/execution-workspace';
 import {executionGit, type ExecutionLaunch} from './execution-workspace';
+import {GitConnections} from './git-connections';
 import { RpcStub } from "capnweb";
 import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, RedactedAiModelConfig, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, OutputSummary, ListOutputsResult, AUTH_ERROR_CODES, createAuthError, ConnectFlowStart, validateCommitEmail } from '@gadgets/workshop-shared/api';
 import { Gatekeeper, GatekeeperUser, GatekeeperUserVerifier, GatekeeperVendor, AccountDescription, VendorDescription, GatekeeperConnectCallback, ConnectHandoff, SupportedResource, ResourceConfiguratorFrame, AppUiContext, GatekeeperUiFrame } from "@gadgets/workshop-shared/gatekeeper";
@@ -186,6 +187,7 @@ async function checkGatekeeperVendorFilter(
 /** Durable Object that stores information about a user. */
 export class UserDurableObject extends DurableObject<Cloudflare.Env> {
   private storage: UserStorage;
+  private gitConnections: GitConnections;
   private vendors: Map<string, Service<GatekeeperVendor>>;
   private adminSettings: DurableObjectNamespace<AdminSettings>;
 
@@ -193,6 +195,7 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     super(ctx, env);
 
     this.storage = makeUserStorage(ctx.storage);
+    this.gitConnections = new GitConnections(ctx.storage, env);
     this.adminSettings = this.ctx.exports.AdminSettings;
 
     this.vendors = buildGatekeeperVendorMap(env);
@@ -662,32 +665,14 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     const enabled = this.env.AETHER_EXECUTION_ENABLED === 'true';
     const identity = await this.env.AETHER_IDENTITIES?.executionIdentity(this.storage.profile.get().id) ?? null;
     const providers = enabled ? await executionGit<GitProvider[]>(this.env, 'providers') : [];
-    const stored = await this.ctx.storage.get<(GitConnection & {token: string})[]>('aether.git.connections') ?? [];
-    return {enabled, identity, providers, connections: stored.map(({id, providerId, login}) => ({id, providerId, login}))};
+    return {enabled, identity, providers, connections: await this.gitConnections.list()};
   }
 
-  async linkGitConnection(providerId: string, token: string): Promise<GitConnection> {
-    if (!providerId || providerId.length > 64 || !token || token.length > 4096 || Array.from(token).some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127)) throw new Error('Invalid Git connection');
-    const {login} = await executionGit<{login: string}>(this.env, 'verify', {providerId, token});
-    const connection = {id: crypto.randomUUID(), providerId, login};
-    await this.ctx.storage.transaction(async txn => {
-      const stored = await txn.get<(GitConnection & {token: string})[]>('aether.git.connections') ?? [];
-      if (stored.length >= 16) throw new Error('Git connection limit reached');
-      await txn.put('aether.git.connections', [...stored, {...connection, token}]);
-    });
-    return connection;
-  }
-
-  async removeGitConnection(connectionId: string): Promise<void> {
-    const stored = await this.ctx.storage.get<(GitConnection & {token: string})[]>('aether.git.connections') ?? [];
-    if (!stored.some(item => item.id === connectionId)) throw new Error('No such Git connection');
-    // Revoke leases before removing the only credential copy, so a failed revoke can be retried.
-    await executionGit(this.env, 'revoke', {connectionId});
-    await this.ctx.storage.transaction(async txn => {
-      const current = await txn.get<(GitConnection & {token: string})[]>('aether.git.connections') ?? [];
-      await txn.put('aether.git.connections', current.filter(item => item.id !== connectionId));
-    });
-  }
+  linkGitConnection(providerId: string, token: string): Promise<GitConnection> {return this.gitConnections.link(providerId, token);}
+  beginGitOAuth(providerId: string): Promise<GitOAuthStart> {return this.gitConnections.begin(providerId);}
+  completeGitOAuth(state: string, code: string): Promise<GitConnection> {return this.gitConnections.complete(state, code);}
+  cancelGitOAuth(state: string): Promise<void> {return this.gitConnections.cancel(state);}
+  removeGitConnection(connectionId: string): Promise<void> {return this.gitConnections.remove(connectionId);}
 
   /** DO NOT MAKE PUBLIC: contains Git credentials, resolved only from this user's private storage. */
   async getExecutionLaunch(git?: GitRepositorySelection): Promise<ExecutionLaunch> {
@@ -695,10 +680,9 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     const identity = await this.env.AETHER_IDENTITIES?.executionIdentity(this.storage.profile.get().id);
     if (!identity) throw new Error('Agent requires a username and non-root UID/GID from your identity provider');
     if (!git) return {identity, environment: 'rhel10'};
-    const stored = await this.ctx.storage.get<(GitConnection & {token: string})[]>('aether.git.connections') ?? [];
-    const connection = stored.find(item => item.id === git.connectionId);
-    if (!connection) throw new Error('Select one of your own linked Git accounts');
-    return {identity, environment: 'rhel10', git: {connectionId: connection.id, providerId: connection.providerId, token: connection.token, repository: git.repository}};
+    const connection = await this.gitConnections.credential(git.connectionId);
+    return {identity, environment: 'rhel10', git: {connectionId: connection.id, providerId: connection.providerId,
+      token: connection.token, authentication: connection.authentication, repository: git.repository}};
   }
 
   /** DO NOT MAKE PUBLIC -- returns API keys. Pure read: call sites replay it across DO resets

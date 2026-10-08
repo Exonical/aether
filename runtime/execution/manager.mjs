@@ -4,6 +4,7 @@ import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {readJson} from './runner.mjs';
 import {createGitBroker} from './git-broker.mjs';
+import {createGitOAuth} from './git-oauth.mjs';
 
 /** A namespace-scoped controller. Kubernetes credentials never enter execution pods. */
 export function kubernetesClient({baseUrl, credentials}) {
@@ -180,12 +181,21 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
     if (request.url === '/healthz' && request.method === 'GET') return reply(200, {ready: true});
     if (request.headers['x-aether-tenant'] !== tenant) return reply(403, {error: 'Execution access denied'});
     if (request.url === '/v1/git/providers' && request.method === 'GET') return reply(200, gitBroker.providers());
-    if (['/v1/git/verify', '/v1/git/revoke'].includes(request.url) && request.method === 'POST') {
+    const oauth = /^\/v1\/git\/oauth\/(begin|exchange|refresh|revoke)$/.exec(request.url);
+    if (oauth && request.method === 'POST') {
+      try {
+        if (!gitBroker.oauth) throw new Error();
+        return reply(200, await gitBroker.oauth[oauth[1]](await readJson(request, 16384)));
+      } catch {return reply(400, {error: 'Git OAuth operation failed'});}
+    }
+    if (['/v1/git/verify', '/v1/git/revoke', '/v1/git/rotate'].includes(request.url) && request.method === 'POST') {
       try {
         const git = await readJson(request, 8192);
         if (request.url.endsWith('/verify')) return reply(200, await gitBroker.verify(git));
         if (typeof git.connectionId !== 'string') throw new Error();
-        gitBroker.revoke(git.connectionId); return reply(200, {});
+        if (request.url.endsWith('/rotate')) gitBroker.rotate(git.connectionId);
+        else gitBroker.revoke(git.connectionId);
+        return reply(200, {});
       } catch {return reply(400, {error: 'Git connection operation failed'});}
     }
     const match = /^\/v1\/workspaces\/([a-f0-9]{64})$/.exec(request.url);
@@ -221,7 +231,10 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   const api = kubernetesClient({baseUrl: 'https://kubernetes.default.svc', credentials: '/var/run/aether-kubernetes'});
-  const gitBroker = createGitBroker({providers: JSON.parse(process.env.AETHER_EXECUTION_GIT_PROVIDERS || '[]'), publicUrl: process.env.AETHER_EXECUTION_GIT_URL});
+  const providers = JSON.parse(process.env.AETHER_EXECUTION_GIT_PROVIDERS || '[]');
+  const clients = process.env.AETHER_EXECUTION_GIT_OAUTH_FILE ? JSON.parse(await readFile(process.env.AETHER_EXECUTION_GIT_OAUTH_FILE, 'utf8')) : {};
+  const oauth = createGitOAuth({providers, clients, publicUrl: process.env.AETHER_EXECUTION_PUBLIC_URL});
+  const gitBroker = createGitBroker({providers, oauth, publicUrl: process.env.AETHER_EXECUTION_GIT_URL});
   gitBroker.server.listen(9007, '0.0.0.0');
   createManager({gitBroker, imagePullSecrets: JSON.parse(process.env.AETHER_EXECUTION_IMAGE_PULL_SECRETS || '[]'), api, tenant: process.env.AETHER_TENANT_ID, namespace: process.env.AETHER_EXECUTION_NAMESPACE,
     image: process.env.AETHER_EXECUTION_IMAGE, storageClass: process.env.AETHER_EXECUTION_STORAGE_CLASS,

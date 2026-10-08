@@ -101,10 +101,11 @@ DNS and destinations in `execution.egress`. Add runner rules for approved packag
 mirrors and development endpoints. The chart's `imagePullSecrets` also apply to
 execution pods.
 
-GitHub uses `kind: github`, `url: https://github.com` and defaults to the
-`https://api.github.com/` API. GitHub Enterprise defaults to the configured origin's
-`/api/v3/`, GitLab to `/api/v4/`. An administrator-controlled `apiUrl` can override
-the API base. Origins/APIs require HTTPS. The optional CA Secret mounts only in
+Use self-hosted GitHub Enterprise Server (`kind: github`) or GitLab Self-Managed
+(`kind: gitlab`). APIs default to the configured origin's `/api/v3/` and `/api/v4/`
+respectively. Public GitHub/GitLab origins are rejected. An administrator-controlled
+`apiUrl` can override the API path on the same origin. Origins/APIs require HTTPS.
+The optional CA Secret mounts only in
 the controller and uses Node's additional CA support.
 
 The controller listens on loopback port 9005. A rotating Kubernetes token mounts
@@ -116,9 +117,12 @@ pod-proxy connectivity, Kata and CSI storage in your cluster.
 
 ## Link Git and use Agent
 
-Choose **Agent → Connect Git** in the composer. Link a personal access token to an
-approved Git service, then choose the account and a repository path such as
+Choose **Agent → Connect Git** in the composer. Authorize your own account on an
+approved internal service with OAuth, then choose the account and a repository path such as
 `team/project`. Tokens stay in private user storage and are redacted from listings.
+See [Enterprise Git OAuth](enterprise-git-oauth.md) for registering applications,
+the private client Secret, refresh and provider-side revocation. Services without
+OAuth credentials can still accept a personal token.
 GitLab tokens need `read_user` and `read_repository`. GitHub tokens need access to
 the chosen repositories with read-only Contents permission and permission to
 identify the account.
@@ -165,7 +169,8 @@ the shell's process group are killed at exit. Text operations are limited to
 that isolated container. Dispatched commands can finish after stop/logout or
 membership changes; existing background-agent lifetime rules still apply. There
 is no per-command approval or filesystem rollback. Interactive terminals, Windows,
-Git OAuth, push/MR publication and automatic PVC cleanup remain future work.
+Repository/branch discovery, GitHub App installation permissions, push/MR
+publication and automatic PVC cleanup remain future work.
 
 ## Validation
 

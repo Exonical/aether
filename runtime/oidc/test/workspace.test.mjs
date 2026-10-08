@@ -1,6 +1,7 @@
 import {createServer, request as httpRequest} from 'node:http';
 import {createExecutionFixture} from '../../execution/test/fixture.mjs';
 import {createGitBroker} from '../../execution/git-broker.mjs';
+import {createGitOAuth} from '../../execution/git-oauth.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {spawn} from 'node:child_process';
@@ -50,15 +51,28 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
   const adapter = await createAdapter(config); t.after(()=>adapter.close());
   const port = await adapter.listen(0);
   const stateDir = await mkdtemp(join(tmpdir(),'aether-oidc-')); t.after(()=>rm(stateDir,{recursive:true,force:true}));
-  const gitApi = createServer((req, res) => {
-    const valid = ['admin-token', 'other-token'].includes(req.headers['private-token']);
+  const gitOAuthCalls = [];
+  const gitApi = createServer(async (req, res) => {
+    if (req.url.startsWith('/oauth/')) {
+      const chunks = []; for await (const chunk of req) chunks.push(chunk);
+      const form = new URLSearchParams(Buffer.concat(chunks).toString());
+      gitOAuthCalls.push({path: req.url, form});
+      res.setHeader('content-type', 'application/json');
+      assert.equal(form.get('client_secret'), 'git-oauth-secret');
+      if (req.url === '/oauth/revoke') return res.end('{}');
+      assert.ok(form.get('code_verifier'));
+      return res.end(JSON.stringify({access_token: 'oauth-access', refresh_token: 'oauth-refresh', expires_in: 7200, scope: 'read_user read_repository', token_type: 'bearer'}));
+    }
+    const valid = ['admin-token', 'other-token'].includes(req.headers['private-token']) || req.headers.authorization === 'Bearer oauth-access';
     res.writeHead(valid ? 200 : 401, {'content-type':'application/json'});
     res.end(JSON.stringify({username:req.headers['private-token'] === 'admin-token' ? 'admin' : 'other'}));
   });
   await new Promise(resolve => gitApi.listen(0,'127.0.0.1',resolve));
   t.after(()=>new Promise(resolve=>{gitApi.close(resolve);gitApi.closeAllConnections();}));
-  const gitBroker = createGitBroker({providers:[{id:'internal',label:'Internal GitLab',kind:'gitlab',url:'https://git.internal'}],
-    publicUrl:'http://git-broker.invalid/', request:(url, options, callback)=>httpRequest(`http://127.0.0.1:${gitApi.address().port}${url.pathname}`,options,callback)});
+  const gitProviders = [{id:'internal',label:'Internal GitLab',kind:'gitlab',url:'https://git.internal'}];
+  const gitRequest = (url, options, callback)=>httpRequest(`http://127.0.0.1:${gitApi.address().port}${url.pathname}`,options,callback);
+  const oauth = createGitOAuth({providers:gitProviders,clients:{internal:{clientId:'git-app',clientSecret:'git-oauth-secret'}},publicUrl:'https://aether.internal',request:gitRequest});
+  const gitBroker = createGitBroker({providers:gitProviders,oauth,publicUrl:'http://git-broker.invalid/',request:gitRequest});
   const execution = await createExecutionFixture(join(stateDir,'execution'),{gitBroker});
   t.after(()=>execution.close());
   let child, logs=''; const sockets=[];
@@ -167,6 +181,22 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     await assert.rejects(async()=>await otherUser.openGadget(otherWorkspace.id).newChat('Cannot borrow account',null,undefined,undefined,undefined,
       {mode:'agent',environment:'rhel10',git:{connectionId:ownGit.id,repository:'team/project'}}),/own linked/i);
     const otherGit=await otherUser.linkGitConnection('internal','other-token');
+    const gitFlow=await user.beginGitOAuth('internal');
+    assert.equal(new URL(gitFlow.url).origin,'https://git.internal');
+    assert.equal(JSON.stringify(gitFlow).includes('git-oauth-secret'),false);
+    assert.deepEqual(Object.keys(gitFlow).toSorted(),['state','url']);
+    await otherUser.cancelGitOAuth(gitFlow.state);
+    await assert.rejects(async()=>await otherUser.completeGitOAuth(gitFlow.state,'code'),/expired/i);
+    const oauthGit=await user.completeGitOAuth(gitFlow.state,'code');
+    await assert.rejects(async()=>await user.completeGitOAuth(gitFlow.state,'code'),/expired/i);
+    assert.equal(JSON.stringify(await user.getExecutionProfile()).includes('oauth-access'),false);
+    assert.equal(JSON.stringify(await user.getExecutionProfile()).includes('oauth-refresh'),false);
+    await assert.rejects(async()=>await otherUser.removeGitConnection(oauthGit.id),/No such/i);
+    await user.removeGitConnection(oauthGit.id);
+    assert.equal(gitOAuthCalls.find(call=>call.path==='/oauth/revoke').form.get('token'),'oauth-access');
+    const canceledFlow=await user.beginGitOAuth('internal');
+    await user.cancelGitOAuth(canceledFlow.state);
+    await assert.rejects(async()=>await user.completeGitOAuth(canceledFlow.state,'code'),/expired/i);
     await assert.rejects(async()=>await otherUser.removeGitConnection(ownGit.id),/No such/i);
     await user.removeGitConnection(ownGit.id);
     assert.deepEqual((await user.getExecutionProfile()).connections,[]);

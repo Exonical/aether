@@ -7,7 +7,7 @@ export interface ExecutionLaunch {
   /** Supported environment, selected by the owner. */
   environment: 'rhel10';
   /** Private connection credential and the selected repository, sent only to the controller. */
-  git?: {connectionId: string; providerId: string; token: string; repository: string};
+  git?: {connectionId: string; providerId: string; token: string; authentication?: 'oauth'; repository: string};
 }
 
 /** Stable launch identity for retained storage; deliberately excludes the personal token. */
@@ -35,7 +35,7 @@ export async function executionId(workspaceId: string, chatId: number): Promise<
 }
 
 /** Private controller request used for user-owned Git connections. */
-export async function executionGit<T>(env: Cloudflare.Env, path: 'providers' | 'verify' | 'revoke', body?: object): Promise<T> {
+export async function executionGit<T>(env: Cloudflare.Env, path: 'providers' | 'verify' | 'revoke' | 'rotate' | 'oauth/begin' | 'oauth/exchange' | 'oauth/refresh' | 'oauth/revoke', body?: object): Promise<T> {
   if (env.AETHER_EXECUTION_ENABLED !== 'true' || !env.AETHER_EXECUTION) throw new Error('Agent environments are disabled');
   const response = await env.AETHER_EXECUTION.fetch(`http://execution/v1/git/${path}`, {
     method: body ? 'POST' : 'GET', headers: {'content-type': 'application/json', 'x-aether-tenant': env.AETHER_EXECUTION_TENANT!},

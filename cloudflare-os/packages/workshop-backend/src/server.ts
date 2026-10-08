@@ -145,6 +145,9 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
   }
   getExecutionProfile(): Promise<ExecutionProfile> {return retryOnDoReset(() => this.#user.getExecutionProfile());}
   linkGitConnection(providerId: string, token: string): Promise<GitConnection> {return this.#user.linkGitConnection(providerId, token);}
+  beginGitOAuth(providerId: string) {return this.#user.beginGitOAuth(providerId);}
+  completeGitOAuth(state: string, code: string): Promise<GitConnection> {return this.#user.completeGitOAuth(state, code);}
+  cancelGitOAuth(state: string): Promise<void> {return this.#user.cancelGitOAuth(state);}
   removeGitConnection(connectionId: string): Promise<void> {return this.#user.removeGitConnection(connectionId);}
   setOwnDisplayName(name: string): Promise<void> {
     return this.#user.setOwnDisplayName(name);

@@ -702,6 +702,14 @@
           "type": "object",
           "additionalProperties": false,
           "properties": {
+            "oauth": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "existingSecret": {"type": "string"},
+                "key": {"type": "string", "minLength": 1}
+              }
+            },
             "providers": {
               "type": "array",
               "maxItems": 16,

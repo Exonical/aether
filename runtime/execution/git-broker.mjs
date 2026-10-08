@@ -1,25 +1,15 @@
 import {createServer} from 'node:http';
 import {request as httpsRequest} from 'node:https';
 import {randomBytes} from 'node:crypto';
+import {gitProviders} from './git-providers.mjs';
 
 const repositoryPath = value => typeof value === 'string' && value.length <= 256
   && /^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*(\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]*)+$/.test(value)
   && value.split('/').every(part => !part.endsWith('.git') && part !== '..');
 
 /** Credentials stay in the controller. Execution pods can only fetch one selected repository. */
-export function createGitBroker({providers = [], publicUrl, request = httpsRequest, now = Date.now}) {
-  const approved = new Map();
-  for (const provider of providers) {
-    const url = new URL(provider.url);
-    const api = new URL(provider.apiUrl || (provider.kind === 'github'
-      ? url.hostname === 'github.com' ? 'https://api.github.com/' : `${url.origin}/api/v3/`
-      : `${url.origin}/api/v4/`));
-    if (!/^[a-z0-9-]{1,64}$/.test(provider.id) || !['github', 'gitlab'].includes(provider.kind)
-        || typeof provider.label !== 'string' || provider.label.length > 100 || approved.has(provider.id)
-        || [url, api].some(u => u.protocol !== 'https:' || u.username || u.password || u.search || u.hash)
-        || url.pathname !== '/' || !api.pathname.endsWith('/')) throw new Error('Invalid Git provider');
-    approved.set(provider.id, {...provider, url, api});
-  }
+export function createGitBroker({providers = [], publicUrl, request = httpsRequest, now = Date.now, oauth}) {
+  const approved = gitProviders(providers);
   const leases = new Map();
   const revoked = new Map();
   const prune = () => {
@@ -28,15 +18,16 @@ export function createGitBroker({providers = [], publicUrl, request = httpsReque
   };
   const credentials = git => {
     const provider = approved.get(git?.providerId);
-    if (!provider || typeof git.token !== 'string' || !git.token || git.token.length > 4096 || /[\x00-\x20\x7f]/.test(git.token)) throw new Error('Invalid Git connection');
+    if (!provider || typeof git.token !== 'string' || !git.token || git.token.length > 4096
+        || [...git.token].some(char => char.charCodeAt(0) <= 32 || char.charCodeAt(0) === 127)) throw new Error('Invalid Git connection');
     return provider;
   };
-  const headers = (provider, token) => ({'user-agent': 'aether', accept: 'application/json',
-    ...(provider.kind === 'gitlab' ? {'private-token': token} : {authorization: `Bearer ${token}`})});
+  const headers = (provider, git) => ({'user-agent': 'aether', accept: 'application/json',
+    ...(provider.kind === 'gitlab' && git.authentication !== 'oauth' ? {'private-token': git.token} : {authorization: `Bearer ${git.token}`})});
   const verify = async git => {
     const provider = credentials(git);
     return new Promise((resolve, reject) => {
-      const upstream = request(new URL('user', provider.api), {headers: headers(provider, git.token)}, response => {
+      const upstream = request(new URL('user', provider.api), {headers: headers(provider, git)}, response => {
         if (response.statusCode !== 200) {response.resume(); return reject(new Error('Git account verification failed'));}
         const chunks = []; let size = 0;
         response.on('data', chunk => {size += chunk.length; if (size > 65536) response.destroy(new Error('Git response too large')); else chunks.push(chunk);});
@@ -90,7 +81,9 @@ export function createGitBroker({providers = [], publicUrl, request = httpsReque
     outgoing.on('close', () => upstream.destroy()); incoming.pipe(upstream);
   });
   return {server, verify, lease, revokeWorkspace,
-    providers: () => [...approved.values()].map(({id, label, kind}) => ({id, label, kind})),
+    rotate: connectionId => {for (const [id, item] of leases) if (item.connectionId === connectionId) leases.delete(id);},
+    oauth,
+    providers: () => [...approved.values()].map(({id, label, kind}) => ({id, label, kind, ...(oauth?.enabled(id) ? {oauth: true} : {})})),
     revoke: connectionId => {
       prune();
       if (revoked.size >= 4096) throw new Error('Git revocation capacity exhausted');

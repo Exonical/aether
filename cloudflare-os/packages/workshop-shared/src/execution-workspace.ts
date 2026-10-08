@@ -16,6 +16,16 @@ export interface GitProvider {
   label: string;
   /** Supported API and authentication protocol. */
   kind: 'github' | 'gitlab';
+  /** Whether an administrator has configured a private OAuth client for this service. */
+  oauth?: boolean;
+}
+
+/** Browser handoff for a user-owned Git OAuth link; contains no credentials or PKCE verifier. */
+export interface GitOAuthStart {
+  /** Authorization URL on the administrator-approved self-hosted service. */
+  url: string;
+  /** One-use state, bound to the caller and checked again by the callback browser. */
+  state: string;
 }
 
 /** Public information about the caller's linked account; never contains credentials. */
