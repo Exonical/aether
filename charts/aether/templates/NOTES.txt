@@ -1,7 +1,5 @@
-Aether tenant fleet managed by Helm release {{ .Release.Name }}.
-{{ range .Values.tenants }}
-Tenant {{ .tenantId }}: namespace {{ .namespace }}
-{{ end }}
-Check each tenant: kubectl -n <tenant-namespace> get statefulsets,pods,httproutes
-Keep exactly one active pod per tenant. Tenant namespaces and state PVCs are retained.
-Chart settings do not rebuild tenant-specific workspace images.
+Aether shared application: {{ .Values.tenantId }}
+kubectl -n {{ .Release.Namespace }} rollout status statefulset/{{ include "aether.name" . }}
+{{ if .Values.gateway.enabled }}Open https://{{ .Values.gateway.hostname }}{{ end }}
+{{ if .Values.departments.enabled }}Manage departments at /departments after signing in.{{ end }}
+Keep one runtime replica and retain its state PVC.

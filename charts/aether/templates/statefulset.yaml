@@ -1,4 +1,3 @@
-{{- define "aether.statefulset" -}}
 apiVersion: apps/v1
 kind: StatefulSet
 metadata:
@@ -60,6 +59,8 @@ spec:
             - --directory-path=kv:storage=/var/lib/aether/kv
             - --directory-path=r2:storage=/var/lib/aether/r2
           env:
+            - name: AETHER_DEPARTMENTS
+              value: {{ .Values.departments.enabled | quote }}
             - name: AETHER_ADMINS
               value: {{ .Values.admins | toJson | quote }}
             {{- if .Values.oidc.enabled }}
@@ -161,13 +162,3 @@ spec:
         resources:
           requests:
             storage: {{ .Values.persistence.size | quote }}
-
-{{- end -}}
-
-{{- range $tenant := .Values.tenants }}
-{{- $values := mergeOverwrite (deepCopy $.Values) (deepCopy $tenant) }}
-{{- $release := mergeOverwrite (deepCopy $.Release) (dict "Name" (printf "%s-%s" $.Release.Name $tenant.tenantId) "Namespace" $tenant.namespace) }}
-{{- $ctx := dict "Values" $values "Release" $release "Chart" $.Chart "Capabilities" $.Capabilities }}
----
-{{ include "aether.statefulset" $ctx }}
-{{ end }}

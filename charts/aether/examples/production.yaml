@@ -1,110 +1,55 @@
-# Replace example registry, hostnames, storage class and tenant Secrets.
-tenants:
-- tenantId: acme
-  image:
-    repository: registry.example.com/aether/workspace
-    tag: 0.8.0-acme
-  admins:
-  - admin@acme.internal
-  persistence:
-    storageClassName: your-rwop-csi-class
-  gateway:
-    enabled: true
-    hostname: acme.aether.example
-    tlsSecretName: aether-tls
-  s3:
-    enabled: true
-    existingSecret: aether-s3
-    egress:
-    - toFQDNs:
-      - matchName: s3.storage.example
-      toPorts:
-      - ports:
-        - port: '443'
-          protocol: TCP
-  postgres:
-    enabled: true
-    existingSecret: aether-postgres
-    egress:
-    - toFQDNs:
-      - matchName: postgres.storage.example
-      toPorts:
-      - ports:
-        - port: '5432'
-          protocol: TCP
-  models:
-    enabled: true
-    existingSecret: aether-models
-    egress:
-    - toFQDNs:
-      - matchName: models.inference.example
-      toPorts:
-      - ports:
-        - port: '443'
-          protocol: TCP
-  oidc:
-    enabled: true
-    existingSecret: aether-oidc
-    egress:
-    - toFQDNs:
-      - matchName: identity.acme.internal
-      toPorts:
-      - ports:
-        - port: '443'
-          protocol: TCP
-    publicUrl: https://acme.aether.example
-  namespace: aether-acme
-- tenantId: beta
-  image:
-    repository: registry.example.com/aether/workspace
-    tag: 0.8.0-beta
-  admins:
-  - admin@beta.internal
-  persistence:
-    storageClassName: your-rwop-csi-class
-  gateway:
-    enabled: true
-    hostname: beta.aether.example
-    tlsSecretName: aether-tls
-  s3:
-    enabled: true
-    existingSecret: aether-s3
-    egress:
-    - toFQDNs:
-      - matchName: s3.storage.example
-      toPorts:
-      - ports:
-        - port: '443'
-          protocol: TCP
-  postgres:
-    enabled: true
-    existingSecret: aether-postgres
-    egress:
-    - toFQDNs:
-      - matchName: postgres.storage.example
-      toPorts:
-      - ports:
-        - port: '5432'
-          protocol: TCP
-  models:
-    enabled: true
-    existingSecret: aether-models
-    egress:
-    - toFQDNs:
-      - matchName: models.inference.example
-      toPorts:
-      - ports:
-        - port: '443'
-          protocol: TCP
-  oidc:
-    enabled: true
-    existingSecret: aether-oidc
-    egress:
-    - toFQDNs:
-      - matchName: identity.acme.internal
-      toPorts:
-      - ports:
-        - port: '443'
-          protocol: TCP
-    publicUrl: https://beta.aether.example
-  namespace: aether-beta
+tenantId: acme
+image:
+  repository: registry.example.com/aether/workspace
+  tag: 0.8.0-acme
+admins:
+- admin@acme.internal
+persistence:
+  storageClassName: your-rwop-csi-class
+gateway:
+  enabled: true
+  hostname: acme.aether.example
+  tlsSecretName: aether-tls
+s3:
+  enabled: true
+  existingSecret: aether-s3
+  egress:
+  - toFQDNs:
+    - matchName: s3.storage.example
+    toPorts:
+    - ports:
+      - port: '443'
+        protocol: TCP
+postgres:
+  enabled: true
+  existingSecret: aether-postgres
+  egress:
+  - toFQDNs:
+    - matchName: postgres.storage.example
+    toPorts:
+    - ports:
+      - port: '5432'
+        protocol: TCP
+models:
+  enabled: true
+  existingSecret: aether-models
+  egress:
+  - toFQDNs:
+    - matchName: models.inference.example
+    toPorts:
+    - ports:
+      - port: '443'
+        protocol: TCP
+oidc:
+  enabled: true
+  existingSecret: aether-oidc
+  egress:
+  - toFQDNs:
+    - matchName: identity.acme.internal
+    toPorts:
+    - ports:
+      - port: '443'
+        protocol: TCP
+  publicUrl: https://acme.aether.example
+departments:
+  enabled: true

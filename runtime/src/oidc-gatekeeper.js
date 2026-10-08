@@ -74,8 +74,9 @@ export class OidcLogin extends DurableObject {
       if (stage === 'start') return result.url;
       const identity = this.ctx.exports.OidcIdentity.get(this.ctx.exports.OidcIdentity.idFromName(result.email));
       await identity.bind(result.issuer, result.subject);
-      await callback.complete(new VerifiedAccount(result.email, result));
-      return null;
+      const handoff=await callback.complete(new VerifiedAccount(result.email, result));
+      if(handoff.targetOrigin !== new URL(this.env.PUBLIC_URL).origin || !/^[a-f0-9]{64}$/.test(handoff.ticket))throw new Error('Invalid login handoff');
+      return `${handoff.targetOrigin}/connect/handoff#${handoff.ticket}`;
     } catch {
       await callback.complete(new VerifiedAccount(null));
       throw new Error('OIDC sign-in failed');

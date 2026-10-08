@@ -99,7 +99,10 @@ jobs:
           baseline_sha="$BASE_SHA"
           if ! git cat-file -e "$baseline_sha^{commit}" 2>/dev/null; then baseline_sha=origin/main; fi
           git archive "$baseline_sha" runtime | tar -x -C /tmp/aether-baseline
-          ln -s "$GITHUB_WORKSPACE/cloudflare-os" /tmp/aether-baseline/cloudflare-os
+          baseline_upstream_sha=$(git ls-tree "$baseline_sha" cloudflare-os | awk '{print $3}')
+          git -C cloudflare-os fetch origin "$baseline_upstream_sha"
+          git -C cloudflare-os worktree add --detach /tmp/aether-baseline/cloudflare-os "$baseline_upstream_sha"
+          pnpm --dir /tmp/aether-baseline/cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
           npm ci --prefix /tmp/aether-baseline/runtime
           node /tmp/aether-baseline/runtime/build-workspace.mjs
         env:

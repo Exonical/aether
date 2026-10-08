@@ -597,81 +597,17 @@
         }
       }
     },
-    "createTenantNamespaces": {
-      "type": "boolean"
+    "tenantId": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
+      "minLength": 1
     },
-    "tenants": {
-      "type": "array",
-      "minItems": 1,
-      "items": {
-        "type": "object",
-        "additionalProperties": false,
-        "required": [
-          "tenantId",
-          "namespace"
-        ],
-        "properties": {
-          "tenantId": {
-            "type": "string",
-            "pattern": "^[a-z0-9][a-z0-9-]{0,62}$",
-            "minLength": 1
-          },
-          "namespace": {
-            "type": "string",
-            "maxLength": 63,
-            "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
-          },
-          "fullnameOverride": {
-            "$ref": "#/properties/fullnameOverride"
-          },
-          "image": {
-            "$ref": "#/properties/image"
-          },
-          "imagePullSecrets": {
-            "$ref": "#/properties/imagePullSecrets"
-          },
-          "runtimeClassName": {
-            "$ref": "#/properties/runtimeClassName"
-          },
-          "admins": {
-            "$ref": "#/properties/admins"
-          },
-          "resources": {
-            "$ref": "#/properties/resources"
-          },
-          "nodeSelector": {
-            "$ref": "#/properties/nodeSelector"
-          },
-          "tolerations": {
-            "$ref": "#/properties/tolerations"
-          },
-          "affinity": {
-            "$ref": "#/properties/affinity"
-          },
-          "podAnnotations": {
-            "$ref": "#/properties/podAnnotations"
-          },
-          "persistence": {
-            "$ref": "#/properties/persistence"
-          },
-          "gateway": {
-            "$ref": "#/properties/gateway"
-          },
-          "networkPolicy": {
-            "$ref": "#/properties/networkPolicy"
-          },
-          "s3": {
-            "$ref": "#/properties/s3"
-          },
-          "postgres": {
-            "$ref": "#/properties/postgres"
-          },
-          "models": {
-            "$ref": "#/properties/models"
-          },
-          "oidc": {
-            "$ref": "#/properties/oidc"
-          }
+    "departments": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
         }
       }
     }

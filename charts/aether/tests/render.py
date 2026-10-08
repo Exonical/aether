@@ -11,8 +11,6 @@ HELM = os.environ.get("HELM", "helm")
 
 
 def render(values, release="acme", valid=True):
-    if "tenants" not in values:
-        values = {"tenants": [{"namespace": "aether-" + values.get("tenantId", "test"), **values}]}
     with tempfile.NamedTemporaryFile(mode="w", suffix=".yaml") as f:
         yaml.safe_dump(values, f)
         f.flush()
@@ -66,7 +64,7 @@ for flags in itertools.product([False, True], repeat=4):
 prod = render(yaml.safe_load((CHART / "examples/production.yaml").read_text()))
 assert not any(d["kind"] in ["Ingress", "Secret"] for d in prod)
 route = next(d for d in prod if d["kind"] == "HTTPRoute")
-assert route["spec"]["parentRefs"] == [{"name": "acme-acme-aether", "sectionName": "https"}]
+assert route["spec"]["parentRefs"] == [{"name": "acme-aether", "sectionName": "https"}]
 other = render({"tenantId": "other"}, "other")
 assert state(prod)["spec"]["selector"] != state(other)["spec"]["selector"]
 shared = render({"tenantId": "acme", "gateway": {"enabled": True, "create": False,
@@ -86,25 +84,13 @@ for bad in [{}, {"tenantId": "Bad"}, {"tenantId": "acme", "replicas": 2},
             {"tenantId": "acme", "oidc": {"sessionTtl": 1}},
             {"tenantId": "acme", "oidc": {"publicUrl": "http://acme.example"}}]:
     render(bad, valid=False)
-# A single release installs two complete, isolated tenants.
-sets = [d for d in prod if d["kind"] == "StatefulSet"]
-assert {d["metadata"]["namespace"] for d in sets} == {"aether-acme", "aether-beta"}
-assert len(sets) == 2
-assert len([d for d in prod if d["kind"] == "Namespace"]) == 2
-assert all(d["metadata"]["annotations"]["helm.sh/resource-policy"] == "keep" for d in prod if d["kind"] == "Namespace")
-for d in prod:
-    if d["kind"] != "Namespace":
-        assert d["metadata"]["namespace"] in {"aether-acme", "aether-beta"}
-for bad in [
-    {"tenants": []},
-    {"tenants": [{"tenantId": "acme", "namespace": "aether-acme"}] * 2},
-    {"tenants": [{"tenantId": "acme", "namespace": "shared"}, {"tenantId": "beta", "namespace": "shared"}]},
-    {"tenants": [{"tenantId": "acme", "namespace": "kube-system"}]},
-    {"tenants": [{"tenantId": "acme", "namespace": "aether-system"}]},
-]:
-    render(bad, valid=False)
-common = render({"runtimeClassName": "", "tenants": [{"tenantId": "acme", "namespace": "aether-acme"}]})
-assert "runtimeClassName" not in state(common)["spec"]["template"]["spec"]
-long = state(render({"tenantId": "a" * 63, "namespace": "long-tenant"}, "r" * 53))
-assert len(long["spec"]["selector"]["matchLabels"]["app.kubernetes.io/instance"]) <= 63
-print("Helm chart contracts passed: 16 feature combinations, production/shared Gateway, isolation, storage and invalid values")
+# Department configuration remains one shared app, not additional deployments.
+assert len([d for d in prod if d["kind"] == "StatefulSet"]) == 1
+assert not any(d["kind"] == "Namespace" for d in prod)
+assert all(d["metadata"]["namespace"] == "aether-system" for d in prod)
+assert {e["name"]:e["value"] for e in state(prod)["spec"]["template"]["spec"]["containers"][0]["env"]}["AETHER_DEPARTMENTS"] == "true"
+render({"tenantId":"acme","departments":{"enabled":True}},valid=False)
+render({"tenants":[{"tenantId":"acme","namespace":"aether-acme"}]},valid=False)
+long=state(render({"tenantId":"a"*63},"r"*53))
+assert len(long["spec"]["selector"]["matchLabels"]["app.kubernetes.io/instance"])<=63
+print("Shared application chart: 16 adapter combinations, Gateway, storage, Secrets, departments and invalid settings passed")

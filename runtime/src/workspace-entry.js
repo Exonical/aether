@@ -21,7 +21,14 @@ export default {
         if (!browserCookie(request, publicUrl.href) || request.headers.get('origin') !== publicUrl.origin
             || request.headers.get('sec-fetch-site') === 'cross-site') return new Response('Same-origin browser required', {status:403});
       }
-      const response = await env.ROUTER.fetch(request);
+      let response = await (pathname === '/departments' || pathname === '/api/departments'
+        ? env.DEPARTMENTS : env.ROUTER).fetch(request);
+      if(pathname === '/' && request.method === 'GET' && env.DEPARTMENTS_ENABLED === 'true'
+          && response.headers.get('content-type')?.startsWith('text/html')) {
+        const html=await response.text();const headers=new Headers(response.headers);
+        headers.delete('content-length');headers.delete('etag');headers.set('cache-control','no-store');
+        response=new Response(html.replace('</body>', '<a href="/departments" style="position:fixed;bottom:16px;right:16px;z-index:1000;background:#fff;color:#24519a;border:1px solid #ccc;border-radius:8px;padding:8px 12px;font:14px system-ui">Departments</a></body>'),{status:response.status,headers});
+      }
       if (request.method === 'GET' && !pathname.startsWith('/gatekeeper/') && response.headers.get('content-type')?.startsWith('text/html')
           && !browserCookie(request, publicUrl.href)) {
         const headers = new Headers(response.headers);
@@ -32,6 +39,7 @@ export default {
       }
       return response;
     }
+    if(pathname === '/departments' || pathname === '/api/departments') return env.DEPARTMENTS.fetch(request);
     return env.ROUTER.fetch(request);
   },
 };

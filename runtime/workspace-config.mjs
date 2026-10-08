@@ -100,7 +100,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       }
       const patches={
         authenticate:["await this.users.get(userId).authenticate(split[1]);", "await this.users.get(userId).authenticate(split[1]);\n    try { await authenticateOidcSession(this, token); } catch { throw createAuthError(AUTH_ERROR_CODES.invalidSessionToken); }"],
-        register:[/await pending.deliver\(`\$\{(email\d*)\}:\$\{secret\}`\);/g, 'if (this.ctx.props.vendorId === "oidc") await this.env.OIDC_SESSIONS.register($1, secret, await account.getOidcIdentity());\n      $&'],
+        register:[/await pending.deliver\(`\$\{(email\d*)\}:\$\{secret\}`, ticketHash\);/g, 'if (this.ctx.props.vendorId === "oidc") await this.env.OIDC_SESSIONS.register($1, secret, await account.getOidcIdentity());\n      $&'],
         websocket:["newWebSocketRpcSession(server, localMain, options)", "newWebSocketRpcSession(guardOidcWebSocket(server, localMain), localMain, options)"],
       };
       for(const [name,[before,after]] of Object.entries(patches)) {
@@ -111,6 +111,22 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     if (constructorCount !== 1 || sessionCount !== 1 || Object.values(counts).some(count=>count!==1)) throw new Error(`Pinned OIDC backend contract changed: constructor=${constructorCount}, session=${sessionCount}, logout=${JSON.stringify(counts)}`);
     result.push({name:"oidc-browser.js", esModule:oidcBrowserModule});
     return result;
+  }
+  function patchDepartmentModules(modules) {
+    const counts={open:0,collaborator:0};
+    const patched=modules.map(module=>{
+      if(!module.esModule)return module;
+      let source=module.esModule;
+      const open=/if \(!isOwner\) \{\s+let sharing = await this.impl.getSharingManager\(\);/g;
+      counts.open+=[...source.matchAll(open)].length;
+      source=source.replace(open, '$&\n      if(this.impl.env.DEPARTMENTS_ENABLED === "true") {try {await this.impl.env.DEPARTMENTS.assertShare(await this.impl.getOwnerProfileId(), profileId);} catch {throw createOpenGadgetError(OPEN_GADGET_ERROR_CODES.workspaceAccessDenied);}}');
+      const collaborator='return (await this.impl.getSharingManager()).addCollaborator({';
+      counts.collaborator+=source.split(collaborator).length-1;
+      source=source.replace(collaborator, 'if(this.impl.env.DEPARTMENTS_ENABLED === "true") await this.impl.env.DEPARTMENTS.assertShare(await this.impl.getOwnerProfileId(), profile.id);\n    '+collaborator);
+      return {...module,esModule:source};
+    });
+    if(Object.values(counts).some(count=>count!==1))throw new Error(`Pinned department sharing contract changed: ${JSON.stringify(counts)}`);
+    return patched;
   }
   const services = workers.map(({ config, modules }) => {
     const classes = validateWorkerConfig(config);
@@ -135,6 +151,9 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     if (config.name === "workshop-backend") {
       bindings.push(
         { name: "ADMINS", fromEnvironment: "AETHER_ADMINS" },
+        { name: "PUBLIC_BASE_URL", fromEnvironment: "AETHER_PUBLIC_URL" },
+        { name: "DEPARTMENTS_ENABLED", fromEnvironment: "AETHER_DEPARTMENTS" },
+        { name: "DEPARTMENTS", service:{name:"aether:departments",entrypoint:"DepartmentDirectory"} },
         { name: "GATEKEEPER_CONTEXT", service: { name: "gatekeeper-context", entrypoint: "GatekeeperVendor", props: { json: JSON.stringify({ sharingDomain: namespace }) } } },
         { name: "GATEKEEPER_SCHEDULER", service: { name: "gatekeeper-scheduler", entrypoint: "GatekeeperVendor" } },
       );
@@ -148,7 +167,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     const names = bindings.map(binding => binding?.name);
     if (names.includes(undefined) || new Set(names).size !== names.length) throw new Error(`Invalid or duplicate binding in ${config.name}`);
     return { name: config.name, worker: {
-      modules: oidc && config.name === "workshop-backend" ? patchOidcModules(modules) : modules, compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags || [],
+      modules: config.name === "workshop-backend" && classes.includes("OverseerDurableObject") ? patchDepartmentModules(oidc ? patchOidcModules(modules) : modules) : modules, compatibilityDate: config.compatibility_date, compatibilityFlags: config.compatibility_flags || [],
       bindings,
       ...(modelGateway && config.name === "workshop-backend" ? { globalOutbound: { name: "aether:model-outbound" } } : {}),
       ...(classes.length ? {
@@ -170,10 +189,20 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       compatibilityDate: "2026-09-04",
       modules: [{ name: "entry.js", esModule: await readFile(join(root, "src/workspace-entry.js"), "utf8") },
         {name:"oidc-browser.js", esModule:await readFile(join(root, "src/oidc-browser.js"), "utf8")}],
-      bindings: [...(oidc ? [{name:"OIDC_PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"}] : []), { name: "ROUTER", service: { name: "router" } }, kvBindings.find(binding => binding.name === "BLUEPRINTS")],
+      bindings: [...(oidc ? [{name:"OIDC_PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"}] : []), { name: "DEPARTMENTS_ENABLED", fromEnvironment: "AETHER_DEPARTMENTS" }, { name: "DEPARTMENTS", service: { name: "aether:departments" } }, { name: "ROUTER", service: { name: "router" } }, kvBindings.find(binding => binding.name === "BLUEPRINTS")],
     } },
     { name: "internet", network: { allow: [] } },
   );
+  // Shared application department directory; disabled unless explicitly configured with OIDC.
+  services.push({name:"aether:departments", worker:{compatibilityDate:"2026-09-04",
+    modules:[{name:"departments.js",esModule:await readFile(join(root,"src/departments.js"),"utf8")}],
+    bindings:[{name:"ENABLED",fromEnvironment:"AETHER_DEPARTMENTS"},
+      {name:"ADMINS",fromEnvironment:"AETHER_ADMINS"},
+      {name:"UI",text:await readFile(join(root,"src/departments.html"),"utf8")},
+      ...(oidc ? [{name:"SESSIONS",service:{name:"aether:oidc",entrypoint:"SessionRegistry"}}] : [])],
+    durableObjectNamespaces:[{className:"Departments",uniqueKey:`${namespace}-departments`,enableSql:true}],
+    durableObjectStorage:{localDisk:"aether:do-storage"},
+  }});
   if (oidc) services.push(
     {name:"aether:oidc-endpoint", external:{address:"127.0.0.1:9004", http:{}}},
     {name:"aether:oidc", worker:{compatibilityDate:"2026-09-04", compatibilityFlags:["allow_irrevocable_stub_storage"],
@@ -182,6 +211,8 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
         {name:"oidc-sessions.js", esModule:await readFile(join(root,"src/oidc-sessions.js"),"utf8")}],
       bindings:[{name:"ADAPTER", service:{name:"aether:oidc-endpoint"}}, {name:"TENANT", text:namespace.slice("aether-tenant-".length)},
         {name:"SESSION_TTL", fromEnvironment:"AETHER_OIDC_SESSION_TTL"},
+        {name:"DEPARTMENTS_ENABLED",fromEnvironment:"AETHER_DEPARTMENTS"},
+        {name:"DEPARTMENTS",service:{name:"aether:departments",entrypoint:"DepartmentDirectory"}},
         {name:"PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"}, {name:"DISPLAY_NAME", fromEnvironment:"AETHER_OIDC_DISPLAY_NAME"}],
       durableObjectNamespaces:["OidcLogin", "OidcIdentity", "OidcSessions"].map(className => ({className, uniqueKey:`${namespace}-oidc-${className}`, enableSql:true})),
       durableObjectStorage:{localDisk:"aether:do-storage"},

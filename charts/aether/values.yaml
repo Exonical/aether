@@ -1,6 +1,4 @@
-# One Helm release manages many isolated tenants. Common defaults below can be
-# overridden by each entry in tenants. tenantId and namespace are required per tenant.
-# Each namespace must be dedicated to one tenant. Images are built per tenant.
+# One shared application. tenantId is its stable installation identity, not a department.
 fullnameOverride: ''
 image:
   repository: registry.example.com/aether/workspace
@@ -115,5 +113,6 @@ oidc:
   publicUrl: ''
   displayName: Single sign-on
   sessionTtl: 28800
-createTenantNamespaces: true
-tenants: []
+tenantId: ''
+departments:
+  enabled: false

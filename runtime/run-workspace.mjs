@@ -26,6 +26,9 @@ if (manifest.oidc) {
   if (!Number.isInteger(ttl) || ttl < 60 || ttl > 86400) throw new Error("OIDC session TTL must be 60–86400 seconds");
   if (!process.env.AETHER_ADMINS) throw new Error("OIDC requires explicit AETHER_ADMINS verified email list (or [])");
 }
+process.env.AETHER_DEPARTMENTS ||= "false";
+if(!["true","false"].includes(process.env.AETHER_DEPARTMENTS) || (process.env.AETHER_DEPARTMENTS === "true" && !manifest.oidc)) throw new Error("Departments require an OIDC artifact");
+process.env.AETHER_PUBLIC_URL ||= "http://127.0.0.1:8080";
 const state = resolve(process.env.AETHER_STATE_DIR || join(root, ".workspace-state"));
 const port = process.env.AETHER_PORT || "8080";
 const bindAddress=process.env.AETHER_BIND_ADDRESS || "127.0.0.1";

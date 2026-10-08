@@ -96,3 +96,24 @@ test('back-channel logout validates signatures, audience, event, time and token 
     {nonce:'ID-token-nonce'},{iat:1},{iat:Math.floor(Date.now()/1000)+60},{exp:1},{jti:''},{sub:undefined,sid:undefined}])
     assert.equal((await verify(await issuer.signLogout(claims))).status,400,JSON.stringify(claims));
 });
+
+
+test('department mapping uses only signed group claims and cannot grant administrator roles', async t => {
+  for(const change of [{AETHER_OIDC_DEPARTMENT_MAPPING:'{"engineering":"eng"}'},
+    {AETHER_OIDC_DEPARTMENT_CLAIM:'groups',AETHER_OIDC_DEPARTMENT_MAPPING:'{"engineering":"Bad ID"}'}])
+    await assert.rejects(readConfig({...base,...change}));
+  const issuer=await createIssuer();t.after(()=>issuer.close());
+  const adapter=await createAdapter(await readConfig({...base,AETHER_OIDC_ISSUER:issuer.origin,AETHER_PUBLIC_URL:'http://127.0.0.1:8080',
+    AETHER_OIDC_ALLOW_HTTP:'true',AETHER_OIDC_DEPARTMENT_CLAIM:'groups',AETHER_OIDC_DEPARTMENT_MAPPING:'{"/Engineering":"engineering","/Finance":"finance"}'}));
+  t.after(()=>adapter.close());const port=await adapter.listen(0);
+  const post=(path,body)=>fetch(`http://127.0.0.1:${port}${path}`,{method:'POST',headers:{'content-type':'application/json','x-aether-oidc-tenant':'acme'},body:JSON.stringify(body)});
+  for(const [claims,status,expected] of [[{groups:['/Engineering','/Engineering','unmapped','admin']},200,['engineering']],
+    [{groups:[]},200,[]],[{groups:'admin'},400],[{groups:[1]},400]]) {
+    issuer.setScenario({claims});
+    const state=randomBytes(32).toString('hex')+'.'+randomBytes(32).toString('base64url');
+    const {url}=await (await post('/begin',{state})).json();
+    const callback=(await fetch(url,{redirect:'manual'})).headers.get('location');
+    const response=await post('/complete',{state,callback});assert.equal(response.status,status);
+    if(status===200)assert.deepEqual((await response.json()).departments,expected);
+  }
+});

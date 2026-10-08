@@ -103,7 +103,14 @@ export async function createAdapter(config) {
       }
       if (claims.sid !== undefined && (typeof claims.sid !== 'string' || !claims.sid || claims.sid.length > 1024 || /[\x00-\x1f\x7f]/.test(claims.sid))) throw new Error('Invalid session ID');
       // Provider credentials never enter a Gadget, session token, durable storage, or response.
-      return reply(200, {email:claims.email, subject:claims.sub, issuer:claims.iss, sid:claims.sid ?? null, issuedAt:claims.iat});
+      let departments=[];
+      if(config.departmentClaim){
+        const groups=claims[config.departmentClaim];
+        if(!Array.isArray(groups) || groups.length>256 || groups.some(group=>typeof group!=='string' || group.length>256)) throw new Error('Invalid department groups');
+        departments=[...new Set(groups.filter(group=>Object.hasOwn(config.departmentMapping,group)).map(group=>config.departmentMapping[group]))];
+        if(departments.length>64)throw new Error('Too many departments');
+      }
+      return reply(200, {departments, email:claims.email, subject:claims.sub, issuer:claims.iss, sid:claims.sid ?? null, issuedAt:claims.iat});
     } catch (error) {
       const unavailable=req.url==='/verify-logout' && (['ERR_JWKS_TIMEOUT','ERR_JWKS_NO_MATCHING_KEY','ERR_JWKS_INVALID'].includes(error.code)
         || ['TypeError','TimeoutError','AbortError'].includes(error.name));
