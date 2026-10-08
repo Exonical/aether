@@ -124,16 +124,23 @@ jobs:
           pnpm --dir cloudflare-os/packages/workshop-backend --pm-on-fail=ignore exec tsc --noEmit
           pnpm --dir cloudflare-os/packages/workshop-frontend --pm-on-fail=ignore exec tsc --noEmit
           pnpm --dir cloudflare-os/packages/workshop-backend --pm-on-fail=ignore exec vitest run __tests__/spawned-agent-tools.test.ts
+          pnpm --dir cloudflare-os/packages/workshop-frontend --pm-on-fail=ignore exec vitest run src/features/execution/ComposerExecutionControls.test.tsx src/features/chat/composer/ChatComposer.test.tsx
       - name: Build Linux workspace images
         run: |
           docker build -f runtime/execution/Dockerfile.runner -t aether-runner:ci runtime/execution
           docker build -f runtime/execution/Dockerfile.manager -t aether-execution:ci runtime/execution
-      - name: Verify hardened Linux runner container
+      - name: Verify RHEL 10 runner identity and in-container sudo
         run: |
-          docker run -d --name execution-runner --read-only --cap-drop=ALL --security-opt=no-new-privileges --tmpfs /tmp:uid=1000,gid=1000 --tmpfs /workspace:uid=1000,gid=1000 -p 127.0.0.1:9006:9006 aether-runner:ci
+          docker run -d --name execution-runner --cap-drop=ALL --cap-add=CHOWN --cap-add=DAC_OVERRIDE --cap-add=SETUID --cap-add=SETGID --cap-add=AUDIT_WRITE -e AETHER_EXECUTION_USERNAME=bryce -e AETHER_EXECUTION_UID=12345 -e AETHER_EXECUTION_GID=23456 --tmpfs /tmp --tmpfs /workspace -p 127.0.0.1:9006:9006 aether-runner:ci
           trap 'docker logs execution-runner; docker rm -f execution-runner' EXIT
           curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:9006/healthz
-          curl --fail -H 'Content-Type: application/json' -d '{"action":"exec","command":"git --version && python3 --version && printf persisted > file"}' http://127.0.0.1:9006/operation | tee /tmp/runner-result.json
+          python3 - <<'PYCODE'
+          import json
+          command = 'test "$(id -u)" = 12345 && test "$(id -g)" = 23456 && test "$(id -un)" = bryce && test "$(sudo -n id -u)" = 0 && . /etc/os-release && test "$ID" = rhel && test "${VERSION_ID%%.*}" = 10 && git --version && python3 --version && printf persisted > file'
+          with open('/tmp/runner-input.json', 'w') as output:
+              json.dump({'action': 'exec', 'command': command}, output)
+          PYCODE
+          curl --fail -H 'Content-Type: application/json' --data-binary @/tmp/runner-input.json http://127.0.0.1:9006/operation | tee /tmp/runner-result.json
           node -e 'const r = require("/tmp/runner-result.json"); if (r.exitCode !== 0) process.exit(1)'
       - name: Verify pinned model SDK with scoped native transport
         run: npm test --prefix runtime/models

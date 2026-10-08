@@ -1,4 +1,64 @@
-/** An operation inside this workspace's isolated Linux environment. */
+/** Verified POSIX identity supplied by the deployment's identity provider. */
+export interface ExecutionIdentity {
+  /** POSIX login name, independent of the editable display name. */
+  username: string;
+  /** Non-root numeric user ID. */
+  uid: number;
+  /** Non-root numeric primary group ID. */
+  gid: number;
+}
+
+/** An operator-approved Git service to which a user may link their account. */
+export interface GitProvider {
+  /** Stable provider identifier. */
+  id: string;
+  /** Display name. */
+  label: string;
+  /** Supported API and authentication protocol. */
+  kind: 'github' | 'gitlab';
+}
+
+/** Public information about the caller's linked account; never contains credentials. */
+export interface GitConnection {
+  /** Opaque, per-user connection identifier. */
+  id: string;
+  /** Operator-approved provider identifier. */
+  providerId: string;
+  /** Verified Git account login. */
+  login: string;
+}
+
+/** A repository chosen from one of the caller's linked Git accounts. */
+export interface GitRepositorySelection {
+  /** Identifier of the caller's connection. */
+  connectionId: string;
+  /** Repository path such as team/project; not a URL. */
+  repository: string;
+}
+
+/** Chat execution settings. Missing settings on older chats mean Ask. */
+export interface ChatExecutionSelection {
+  /** Ask uses workerd; Agent uses a Kata workspace. */
+  mode: 'ask' | 'agent';
+  /** The only currently supported container environment. */
+  environment: 'rhel10';
+  /** Optional repository checked out into the Agent workspace. */
+  git?: GitRepositorySelection;
+}
+
+/** Execution choices available to the currently authenticated user. */
+export interface ExecutionProfile {
+  /** Whether the deployment has enabled Kata execution. */
+  enabled: boolean;
+  /** Trusted POSIX identity, or null when the IdP supplies no valid identity. */
+  identity: ExecutionIdentity | null;
+  /** Operator-approved Git services. */
+  providers: GitProvider[];
+  /** The caller's linked accounts, with credentials redacted. */
+  connections: GitConnection[];
+}
+
+/** An operation inside this chat's isolated Linux environment. */
 export type ExecutionOperation =
   | {/** Lifecycle or inspection action. */ action: 'start' | 'suspend' | 'status'}
   | {/** Execute a shell command. */ action: 'exec'; /** Shell command, bounded to 16 KiB. */ command: string}

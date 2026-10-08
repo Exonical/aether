@@ -512,7 +512,9 @@ export interface AgentHooks {
                    bindings: Record<string, ChatBindingEntry>,
                    onOutputText?: (delta: string) => void,
                    worktreeTurn?: WorktreeTurnAccess): Promise<string>;
-  /** Whether this owner-initiated turn has a Linux workspace grant. */
+  /** Provision the selected Agent workspace before prompting the model. Ask is a no-op. */
+  prepareExecutionWorkspace?(chatId: number, abortSignal: AbortSignal): Promise<void>;
+  /** Whether this owner-initiated turn has an Agent workspace grant. */
   executionWorkspaceEnabled?(chatId: number): Promise<boolean>;
   /** Execute a bounded operation under that workspace grant. */
   agentWorkspaceOperation?(chatId: number, operation: ExecutionOperation): Promise<ExecutionResult>;
@@ -1440,6 +1442,7 @@ export async function runAgent(
     abortSignal: AbortSignal,
     initiator: AiChatAuthorInfo,
     modelConfig: AiModelConfig): Promise<void> {
+  await hooks.prepareExecutionWorkspace?.(chatId, abortSignal);
   let retries = 0;
   while (true) {
     let history = hooks.loadChatHistory(chatId);
@@ -3008,6 +3011,12 @@ async function runAgentPass(
     ];
   }
 
+  const kataAgent = !agentContext.spawnerConfig && await hooks.executionWorkspaceEnabled?.(chatId) === true;
+  if (kataAgent) systemPromptSlots = [
+    'You are a coding agent working in the user-selected RHEL 10 Kata environment. Use the workspace tool for shell commands and files. Commands start as the signed-in POSIX user and have sudo inside this isolated environment. The persistent directory is /workspace; a selected Git repository is in /workspace/repository. Inspect the repository, implement the requested changes, run relevant checks, and report results. Git access is read-only and scoped to the selected repository. Never request, print, or store Git credentials. Do not claim to have run a command unless the workspace tool returned its result.',
+    'Only the workspace tool is available in Agent mode. Ask mode handles general chat, documents, slides, sheets, and workerd Gadgets.',
+  ];
+
   // Shared guidance precedes deployment instructions for both agent types.
   systemPromptSlots[0] += `\n\n${COMMUNICATION_GUIDANCE}`;
   if (instanceInstructions) {
@@ -3823,10 +3832,10 @@ async function runAgentPass(
     }),
   };
 
-  if (!agentContext.spawnerConfig && await hooks.executionWorkspaceEnabled?.(chatId)) {
+  if (kataAgent) {
     tools.workspace = defineTool({
-      name: 'workspace', label: 'Linux workspace',
-      description: 'Run shell commands, read/write text files, list directories, or check status in the persistent Linux workspace. Commands have a 60-second deadline and bounded output. Paths are relative to /workspace. Use exec with git clone to obtain a repository, then git diff to review changes and project commands to test them. This is separate from Gadget source files. Network destinations are controlled by the deployment. Do not place credentials in commands or file contents.',
+      name: 'workspace', label: 'RHEL 10 workspace',
+      description: 'Run shell commands, read/write text files, list directories, or check status in the persistent Linux workspace. Commands have a 60-second deadline and bounded output. Paths are relative to /workspace. The selected repository is already checked out in /workspace/repository. Use git diff to review changes and project commands to test them. This is separate from Gadget source files. Network destinations are controlled by the deployment. Do not place credentials in commands or file contents.',
       parameters: Type.Object({
         action: Type.Union(['status', 'exec', 'read', 'write', 'list'].map(value => Type.Literal(value))),
         command: Type.Optional(Type.String()), path: Type.Optional(Type.String()), content: Type.Optional(Type.String()),
@@ -3856,6 +3865,8 @@ async function runAgentPass(
     // assertMayModifyWorkpiece).
     tools = Object.fromEntries(SPAWNED_AGENT_TOOLS.map(name => [name, tools[name]]));
   }
+
+  if (kataAgent) tools = {workspace: tools.workspace};
 
   // Calls that reached a tool's execute(), so tool_execution_end can tell the ones pi rejected.
   let executedToolCalls = new Set<string>();

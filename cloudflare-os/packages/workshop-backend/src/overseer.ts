@@ -1,5 +1,5 @@
-import {executeWorkspace} from './execution-workspace';
-import type {ExecutionOperation, ExecutionResult} from '@gadgets/workshop-shared/execution-workspace';
+import {chatExecution, executeWorkspace, executionId, executionLaunchKey, type ExecutionLaunch} from './execution-workspace';
+import type {ChatExecutionSelection, ExecutionOperation, ExecutionResult} from '@gadgets/workshop-shared/execution-workspace';
 import { RpcCompatible, RpcStub, RpcTarget } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import { Overseer, GadgetMetadata, UiBundle, WorkpieceId, WorkpieceSummary, WorkpiecesSubscriber, GadgetClient, GadgetBindingInfo, GatekeeperClient, ActionLogEntry, ActionsSubscriber, ActionHistoryFilter, ActionHistoryPage, ChatGadgetPinRecord, MainlineMergeGadget, ChatCodeBase, ChatGadgetPinState, CodeChangeSubmission, CommitInfo, FileAtCommit, MAX_READ_FILES_PER_CALL, TreeNode, MergeChangesResult, AiChatMetadata, AiChatMessage, AiChatHistoryPage, AiChatSubscriber, AiChatAuthorInfo, AiModelConfig, AiChatMessageBody, AgentSpawnerConfig, ConsoleLogSubscriber, ConsoleLogEvent, CapsuleSpecifier, CollaboratorInfo, CollaboratorRole, AffectedCollaborator, ShareLinkInfo, GatekeeperCreationSpec, ObserverConfigCallback, ObserverBindingNeed, ObserverBindingFailure, BlueprintBindingAnnotation, BlueprintBinding, BlueprintMetadata, BlueprintOutput, BlueprintMerge, ApplyBlueprintResult, GadgetUpstream, MessageFormatRef, isOutputIcon, SpawnerEnvTarget, BlueprintGadgetSummary, AiChatStreamEvent, BlueprintScreenshotUpload, BLUEPRINT_SCREENSHOT_R2_PREFIX, blueprintScreenshotUrl, ChatAttachmentUpload, ChatAttachmentHandle, ChatAttachmentRef, BoundHookInfo, PreApprovableAction, PresenceParticipant, PresenceSubscriber, SlashCommandChoice, SlashCommandRequest, validateBindingName, createOpenGadgetError, OPEN_GADGET_ERROR_CODES, resolveSiteName } from '@gadgets/workshop-shared/api';
@@ -2433,18 +2433,47 @@ class OverseerImpl implements AgentHooks {
 
   async executionWorkspaceEnabled(chatId: number): Promise<boolean> {
     return this.env.AETHER_EXECUTION_ENABLED === 'true'
-      && await this.ctx.storage.get<boolean>('aether.execution.enabled') === true
+      && this.storage.chatMeta.get(chatId)?.execution?.mode === 'agent'
+      && await this.ctx.storage.get<boolean>(`aether.execution.enabled.${chatId}`) === true
       && this.storage.activeAgents.get(chatId)?.initiatorUserId === this.ownerId;
+  }
+
+  async assertExecutionLaunch(chatId: number, launch: ExecutionLaunch): Promise<void> {
+    const established = await this.ctx.storage.get<string>(`aether.execution.identity.${chatId}`);
+    if (established && established !== executionLaunchKey(launch)) throw new Error('Create a new chat to change an Agent workspace identity or repository');
+  }
+
+  async prepareExecutionWorkspace(chatId: number, abortSignal: AbortSignal): Promise<void> {
+    const selection = this.storage.chatMeta.get(chatId)?.execution;
+    if (selection?.mode !== 'agent') return;
+    if (this.storage.activeAgents.get(chatId)?.initiatorUserId !== this.ownerId) throw new Error('Only the owner can start an Agent turn');
+    await this.ctx.storage.put(`aether.execution.enabled.${chatId}`, false);
+    const launch = await this.ownerUserDo().getExecutionLaunch(selection.git);
+    await this.assertExecutionLaunch(chatId, launch);
+    const id = await executionId(this.ctx.id.toString(), chatId);
+    let result = await executeWorkspace(this.env, id, {action: 'start'}, launch);
+    await this.ctx.storage.put(`aether.execution.identity.${chatId}`, executionLaunchKey(launch));
+    const deadline = Date.now() + 180000;
+    while (result.state !== 'ready') {
+      abortSignal.throwIfAborted();
+      if (Date.now() >= deadline || ['failed', 'stopping'].includes(result.state!)) throw new Error('RHEL 10 workspace did not become ready; check the execution controller');
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      result = await executeWorkspace(this.env, id, {action: 'status'});
+    }
+    abortSignal.throwIfAborted();
+    // Renew the repository lease and finish checkout only after the runner is ready.
+    if (launch.git) await executeWorkspace(this.env, id, {action: 'start'}, launch);
+    await this.ctx.storage.put(`aether.execution.enabled.${chatId}`, true);
   }
 
   async agentWorkspaceOperation(chatId: number, operation: ExecutionOperation): Promise<ExecutionResult> {
     if (!await this.executionWorkspaceEnabled(chatId) || ['start', 'suspend'].includes(operation.action)) {
-      throw new Error('Owner-started Linux workspace required');
+      throw new Error('Owner-started Agent workspace required');
     }
-    const result = await executeWorkspace(this.env, this.ctx.id.toString(), operation);
+    const result = await executeWorkspace(this.env, await executionId(this.ctx.id.toString(), chatId), operation);
     if (['read', 'list', 'exec'].includes(operation.action)) {
-      await this.recordAgentObservation(chatId, 'Linux workspace', undefined,
-          {title: `Workspace ${operation.action}`, description: 'Read bounded Linux workspace output.'});
+      await this.recordAgentObservation(chatId, 'RHEL 10 workspace', undefined,
+          {title: `Workspace ${operation.action}`, description: 'Read bounded RHEL workspace output.'});
     }
     return result;
   }
@@ -6065,6 +6094,7 @@ class OverseerImpl implements AgentHooks {
     responseTargetRegistration?: ExternalMessageResponseTargetRegistration,
     externalChatKey?: string,
     formats?: MessageFormatRef[],
+    execution?: ChatExecutionSelection,
   ): Promise<number> {
     if (responseTargetRegistration) {
       let decision = this.#prepareExternalMessageResponseTargetRegistration(responseTargetRegistration);
@@ -6090,6 +6120,7 @@ class OverseerImpl implements AgentHooks {
         title: "New Chat",   // filled in later by AI
         started: timestamp,
         lastActive: timestamp,
+        execution: chatExecution(execution),
       };
       if (prepared.message !== undefined && userMeta.aiModel) {
         meta.activeAgent = userMeta.aiModel.profile;
@@ -6146,6 +6177,7 @@ class OverseerImpl implements AgentHooks {
     attachments?: ChatAttachmentHandle[],
     responseTargetRegistration?: ExternalMessageResponseTargetRegistration,
     formats?: MessageFormatRef[],
+    execution?: ChatExecutionSelection,
   ): Promise<void> {
     if (responseTargetRegistration) {
       let decision = this.#prepareExternalMessageResponseTargetRegistration(responseTargetRegistration);
@@ -6165,6 +6197,7 @@ class OverseerImpl implements AgentHooks {
     let result = this.materializeChatChanges(chatId, meta);
     if (result) meta = result.meta;
     meta.lastActive = this.getChatTimestamp();
+    if (execution) meta.execution = chatExecution(execution);
     // A built-in command runs a turn without a prompt: `/compact` compacts and ends.
     let runsAgentTurn = prepared.message !== undefined ||
         prepared.slashCommand?.id.builtin === true;
@@ -10270,15 +10303,18 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     return profilePromise;
   }
 
-  async executionWorkspace(operation: ExecutionOperation): Promise<ExecutionResult> {
-    if (!this.isOwner) throw new Error('Only the owner can control the Linux workspace');
-    if (operation.action === 'suspend') await this.impl.ctx.storage.put('aether.execution.enabled', false);
-    if (!['start', 'status', 'suspend'].includes(operation.action)
-        && !await this.impl.ctx.storage.get<boolean>('aether.execution.enabled')) {
-      throw new Error('Start the Linux workspace first');
-    }
-    const result = await executeWorkspace(this.impl.env, this.impl.ctx.id.toString(), operation);
-    if (operation.action === 'start') await this.impl.ctx.storage.put('aether.execution.enabled', true);
+  async executionWorkspace(operation: ExecutionOperation, chatId: number): Promise<ExecutionResult> {
+    if (!this.isOwner) throw new Error('Only the owner can control the Agent workspace');
+    if (this.impl.storage.chatMeta.get(chatId)?.execution?.mode !== 'agent') throw new Error('Choose Agent in the chat composer first');
+    const key = `aether.execution.enabled.${chatId}`;
+    if (operation.action === 'suspend') await this.impl.ctx.storage.put(key, false);
+    if (!['start', 'status', 'suspend'].includes(operation.action) && !await this.impl.ctx.storage.get<boolean>(key)) throw new Error('Start the Agent workspace first');
+    const launch = operation.action === 'start'
+      ? await this.#clientUser.getExecutionLaunch(this.impl.storage.chatMeta.get(chatId)!.execution?.git) : undefined;
+    if (launch) await this.impl.assertExecutionLaunch(chatId, launch);
+    const result = await executeWorkspace(this.impl.env, await executionId(this.impl.ctx.id.toString(), chatId), operation, launch);
+    if (launch) await this.impl.ctx.storage.put(`aether.execution.identity.${chatId}`, executionLaunchKey(launch));
+    if (operation.action === 'start' && result.state === 'ready') await this.impl.ctx.storage.put(key, true);
     return result;
   }
 
@@ -10474,9 +10510,8 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     if (!this.isOwner) {
       throw new Error("Only the workspace owner can delete it.");
     }
-    if (this.impl.env.AETHER_EXECUTION_ENABLED === 'true'
-        && await this.impl.ctx.storage.get<boolean>('aether.execution.enabled')) {
-      await this.executionWorkspace({action: 'suspend'});
+    if (this.impl.env.AETHER_EXECUTION_ENABLED === 'true') {
+      for (const chat of this.impl.storage.chatMeta.list()) if (chat.execution?.mode === 'agent') await this.executionWorkspace({action: 'suspend'}, chat.id);
     }
     let startedAt = Date.now();
 
@@ -11378,23 +11413,42 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     }));
   }
 
+  async #executionSelection(selection?: ChatExecutionSelection, chatId?: number): Promise<ChatExecutionSelection> {
+    const normalized = chatExecution(selection);
+    if (normalized.mode === 'agent') {
+      if (!this.isOwner) throw new Error('Only the workspace owner can use Agent mode');
+      const launch = await this.#clientUser.getExecutionLaunch(normalized.git);
+      if (chatId !== undefined) await this.impl.assertExecutionLaunch(chatId, launch);
+    }
+    return normalized;
+  }
+
   async newChat(initialMessage: string | SlashCommandRequest, chosenModelId: string | null,
                 capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-                formats?: MessageFormatRef[]): Promise<number> {
+                formats?: MessageFormatRef[], execution?: ChatExecutionSelection): Promise<number> {
+    const selection = await this.#executionSelection(execution);
     let userMeta = await retryOnDoReset(
         () => this.#clientUser.getChatContext(chosenModelId), this.impl.logger);
     return this.impl.newChat(this.#clientUser, userMeta, initialMessage, capsules, attachments,
-                             undefined, undefined, formats);
+                             undefined, undefined, formats, selection);
   }
 
   async sendChatMessage(
       chatId: number, message: string | SlashCommandRequest, chosenModelId: string | null,
       capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-      formats?: MessageFormatRef[]): Promise<void> {
+      formats?: MessageFormatRef[], execution?: ChatExecutionSelection): Promise<void> {
+    this.impl.assertChatNotActive(chatId);
+    const previous = this.impl.storage.chatMeta.get(chatId)?.execution;
+    const selection = await this.#executionSelection(execution ?? previous, chatId);
+    if (!this.isOwner && JSON.stringify(selection) !== JSON.stringify(chatExecution(previous))) throw new Error('Only the owner can change chat execution settings');
+    if (previous?.mode === 'agent' && selection.mode === 'ask') {
+      await this.impl.ctx.storage.put(`aether.execution.enabled.${chatId}`, false);
+      if (this.impl.env.AETHER_EXECUTION_ENABLED === 'true') await this.executionWorkspace({action: 'suspend'}, chatId);
+    }
     let userMeta = await retryOnDoReset(
         () => this.#clientUser.getChatContext(chosenModelId), this.impl.logger);
     return this.impl.sendChatMessage(
-        this.#clientUser, userMeta, chatId, message, capsules, attachments, undefined, formats);
+        this.#clientUser, userMeta, chatId, message, capsules, attachments, undefined, formats, selection);
   }
 
   async setChatTitle(chatId: number, title: string): Promise<void> {
@@ -11425,6 +11479,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   }
 
   async deleteChat(chatId: number): Promise<void> {
+    if (this.impl.env.AETHER_EXECUTION_ENABLED === 'true' && this.impl.storage.chatMeta.get(chatId)?.execution?.mode === 'agent') await this.executionWorkspace({action: 'suspend'}, chatId);
     let startedAt = Date.now();
     let response = this.impl.storage.gadgetResponseDeliveries.undeliveredByChatId.get(chatId);
     if (response?.status === "waiting") {
@@ -11821,7 +11876,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 // whether "use" callers may invoke it.
 @validateRpc()
 class UseOverseerInterface extends RpcTarget implements Overseer {
-  executionWorkspace(_operation: ExecutionOperation): Promise<ExecutionResult> {
+  executionWorkspace(_operation: ExecutionOperation, _chatId: number): Promise<ExecutionResult> {
     throw new Error('Only the owner can control the Linux workspace');
   }
 

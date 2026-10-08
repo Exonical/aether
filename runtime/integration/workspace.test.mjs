@@ -141,23 +141,13 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     const manifest = JSON.parse(await readFile(join(root, "dist/workspace/manifest.json"), "utf8"));
     assert.deepEqual(manifest.workers, ["router", "workshop-backend", "gatekeeper-context", "gatekeeper-scheduler"]);
     if (executionFixture) {
-      const operation = body => rpc(api => api.authenticate(login).openGadget(workspace.id).executionWorkspace(body));
-      assert.equal((await operation({action: 'start'})).state, 'ready');
-      assert.equal((await operation({action: 'exec', command: 'git init -q && printf initial > README.md && git add . && git -c user.name=Fixture -c user.email=fixture@example.com commit -qm initial'})).exitCode, 0);
-      await operation({action: 'write', path: 'README.md', content: 'agent workspace\n'});
-      assert.match((await operation({action: 'exec', command: 'git diff -- README.md'})).output, /\+agent workspace/);
-      await operation({action: 'suspend'});
-      await assert.rejects(operation({action: 'exec', command: 'echo denied'}), /start/i);
-      await operation({action: 'start'});
-      assert.equal((await operation({action: 'read', path: 'README.md'})).content, 'agent workspace\n');
-      await assert.rejects(rpc(api => api.authenticate(otherToken).openGadget(workspace.id).executionWorkspace({action: 'status'})), /access|permission|not found/i);
-      // Explicit sharing still cannot grant another user direct Linux control.
-      await rpc(api => api.authenticate(otherToken).provisionAmbientAccount('context'));
-      await rpc(api => api.authenticate(otherToken).provisionAmbientAccount('scheduler'));
-      const link = await rpc(api => api.authenticate(login).openGadget(workspace.id).createShareLink('build'));
-      await assert.rejects(rpc(api => api.authenticate(otherToken).openGadget(workspace.id, link.key).executionWorkspace({action: 'exec', command: 'echo denied'})), /owner/i);
+      const profile = await rpc(api => api.authenticate(login).getExecutionProfile());
+      assert.equal(profile.identity, null);
+      const chatId = await rpc(api => api.authenticate(login).openGadget(workspace.id).newChat('Ask only', null));
       const calls = executionFixture.calls.length;
-      await assert.rejects(rpc(api => api.authenticate('forged').openGadget(workspace.id).executionWorkspace({action: 'start'})), /session|token|auth/i);
+      await assert.rejects(rpc(api => api.authenticate(login).openGadget(workspace.id).executionWorkspace({action: 'start'}, chatId)), /Agent/i);
+      await assert.rejects(rpc(api => api.authenticate(login).openGadget(workspace.id).newChat('Agent denied', null, undefined, undefined, undefined, {mode: 'agent', environment: 'rhel10'})), /identity provider|UID/i);
+      await assert.rejects(rpc(api => api.authenticate('forged').openGadget(workspace.id).executionWorkspace({action: 'start'}, chatId)), /session|token|auth/i);
       assert.equal(executionFixture.calls.length, calls);
     }
   } catch (error) {

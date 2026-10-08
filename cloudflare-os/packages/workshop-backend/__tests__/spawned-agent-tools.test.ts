@@ -37,7 +37,7 @@ async function withImpl(fn: (impl: any) => Promise<void>): Promise<void> {
     impl.ownerId = OWNER_USER_ID;
     impl.users = {
       idFromString: (id: string) => id,
-      get: () => ({ getChatContext: async () => ({ profile: OWNER }) }),
+      get: () => ({ getChatContext: async () => ({ profile: OWNER }), getExecutionLaunch: async () => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456}}) }),
     };
     // The turn is driven by hand below, not by the spawn.
     impl.startAgent = () => {};
@@ -102,29 +102,40 @@ describe('owner-authorized Linux workspace tools', () => {
   it('offers and executes the real agent tool only for an enabled owner-initiated turn', async () => {
     await withImpl(async impl => {
       const chatId = 1;
-      impl.storage.chatMeta.put({id: chatId, title: 'Linux task', started: new Date(), lastActive: new Date()});
+      impl.storage.chatMeta.put({id: chatId, title: 'Linux task', execution: {mode: 'agent', environment: 'rhel10'}, started: new Date(), lastActive: new Date()});
       impl.storage.chats.put({chatId, sequence: impl.nextChatSequence(chatId), timestamp: new Date(),
         author: OWNER, type: 'message', message: 'Run the repository tests.'});
       const calls: any[] = [];
       impl.env = {...impl.env, AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
         AETHER_EXECUTION: {fetch: async (_url: string, init: RequestInit) => {
-          calls.push(JSON.parse(init.body as string)); return Response.json({output: 'tests passed', exitCode: 0});
+          calls.push(JSON.parse(init.body as string)); return Response.json({state: 'ready', output: 'tests passed', exitCode: 0});
         }}};
-      await impl.ctx.storage.put('aether.execution.enabled', true);
+      await impl.ctx.storage.put('aether.execution.enabled.1', true);
       impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
       const offered = await runScriptedTurn(impl, chatId, [
         fauxAssistantMessage([fauxToolCall('workspace', {action: 'exec', command: 'npm test'})]),
         fauxAssistantMessage([fauxText('Done')]),
       ]);
-      expect(offered[0]).toContain('workspace');
-      expect(calls).toEqual([{action: 'exec', command: 'npm test'}]);
+      expect(offered[0]).toEqual(['workspace']);
+      expect(calls.map(call => call.action)).toEqual(['start', 'exec']);
+      expect(calls[0].identity).toEqual({username: 'owner', uid: 12345, gid: 23456});
       expect(toolCalls(impl, chatId).find(call => call.toolName === 'workspace')?.output).toContain('tests passed');
       impl.storage.activeAgents.put({chatId, initiatorUserId: 'collaborator', modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
       expect(await impl.executionWorkspaceEnabled(chatId)).toBe(false);
       await expect(impl.agentWorkspaceOperation(chatId, {action: 'exec', command: 'denied'})).rejects.toThrow('Owner-started');
-      await impl.ctx.storage.put('aether.execution.enabled', false);
+      await impl.ctx.storage.put('aether.execution.enabled.1', false);
       impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
       expect(await impl.executionWorkspaceEnabled(chatId)).toBe(false);
+      // A stale grant from a previous Agent turn must not add Linux tools to Ask.
+      const metadata = impl.storage.chatMeta.get(chatId);
+      metadata.execution = {mode: 'ask', environment: 'rhel10'};
+      impl.storage.chatMeta.put(metadata);
+      await impl.ctx.storage.put('aether.execution.enabled.1', true);
+      impl.storage.chats.put({chatId, sequence: impl.nextChatSequence(chatId), timestamp: new Date(), author: OWNER, type: 'message', message: 'Ask a follow-up'});
+      const askTools = await runScriptedTurn(impl, chatId, [fauxAssistantMessage([fauxText('Hello')])]);
+      expect(askTools[0]).not.toContain('workspace');
+      expect(askTools[0]).toContain('executeCode');
+      await expect(impl.agentWorkspaceOperation(chatId, {action: 'exec', command: 'denied'})).rejects.toThrow('Owner-started');
     });
   });
 });

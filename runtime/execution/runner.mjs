@@ -32,7 +32,7 @@ export async function createRunner({root, timeoutMs = 60000, outputLimit = 10485
   const execute = command => new Promise((resolveResult, reject) => {
     if (typeof command !== 'string' || !command.trim() || command.length > 16384 || command.includes('\0')) return reject(new Error('Invalid command'));
     const child = spawn('/bin/sh', ['-lc', command], {cwd: root, detached: true,
-      env: {PATH: '/usr/local/bin:/usr/bin:/bin', HOME: root, LANG: 'C.UTF-8'}, stdio: ['ignore', 'pipe', 'pipe']});
+      env: {PATH: process.env.PATH || '/usr/local/bin:/usr/bin:/bin', HOME: root, USER: process.env.USER || '', LOGNAME: process.env.LOGNAME || '', LANG: 'C.UTF-8'}, stdio: ['ignore', 'pipe', 'pipe']});
     let output = '', size = 0, truncated = false, timedOut = false, settled = false;
     const kill = () => {try {process.kill(-child.pid, 'SIGKILL');} catch {}};
     const finish = (exitCode, signal) => {

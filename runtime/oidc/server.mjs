@@ -1,3 +1,4 @@
+import {posixIdentity} from './posix-identity.mjs';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 import { resolve } from 'node:path';
@@ -110,7 +111,7 @@ export async function createAdapter(config) {
         departments=[...new Set(groups.filter(group=>Object.hasOwn(config.departmentMapping,group)).map(group=>config.departmentMapping[group]))];
         if(departments.length>64)throw new Error('Too many departments');
       }
-      return reply(200, {departments, email:claims.email, subject:claims.sub, issuer:claims.iss, sid:claims.sid ?? null, issuedAt:claims.iat});
+      return reply(200, {posix:posixIdentity(claims, config), departments, email:claims.email, subject:claims.sub, issuer:claims.iss, sid:claims.sid ?? null, issuedAt:claims.iat});
     } catch (error) {
       const unavailable=req.url==='/verify-logout' && (['ERR_JWKS_TIMEOUT','ERR_JWKS_NO_MATCHING_KEY','ERR_JWKS_INVALID'].includes(error.code)
         || ['TypeError','TimeoutError','AbortError'].includes(error.name));

@@ -47,6 +47,6 @@ This replaces the unmerged fleet chart's `tenants[]` format with one application
 
 CI lints/packages the chart and checks all 16 adapter combinations, storage, private ports/CA mounts, Gateway modes, department prerequisites and invalid settings. Live cluster, storage and external service validation remain deployment checks.
 
-## Linux agent workspaces
+## Ask and Agent environments
 
-See the [agent workspace guide](../../docs/agent-workspaces.md) for the optional `execution.enabled` controller and retained runner PVCs. Execution requires OIDC departments, Cilium network policies, and a configured Kata runtime. Build and publish both execution images before enabling it.
+See the [Ask and Agent guide](../../docs/agent-workspaces.md) for composer controls, the optional `execution.enabled` controller, trusted OIDC UID/GID claims, per-user Git links and retained per-chat runner PVCs. Ask defaults to workerd. Agent uses RHEL 10 and in-container sudo. Execution requires OIDC departments, Cilium network policies, and a configured Kata runtime. Build and publish both execution images before enabling it.

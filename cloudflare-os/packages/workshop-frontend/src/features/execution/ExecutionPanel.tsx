@@ -4,11 +4,11 @@ import type {RpcStub} from 'capnweb';
 import type {Overseer} from '@gadgets/workshop-shared/api';
 import type {ExecutionOperation, ExecutionResult} from '@gadgets/workshop-shared/execution-workspace';
 
-export const ExecutionPanel = ({overseer}: {overseer: RpcStub<Overseer>}) => {
+export const ExecutionPanel = ({overseer, chatId}: {overseer: RpcStub<Overseer>; chatId: number}) => {
   const [state, setState] = useState('unknown');
   const [busy, setBusy] = useState(false);
   const [command, setCommand] = useState('git status --short');
-  const [path, setPath] = useState('README.md');
+  const [path, setPath] = useState('repository/README.md');
   const [content, setContent] = useState('');
   const [output, setOutput] = useState('');
   const generation = useRef(0);
@@ -16,17 +16,17 @@ export const ExecutionPanel = ({overseer}: {overseer: RpcStub<Overseer>}) => {
   useEffect(() => {
     const current = ++generation.current;
     setBusy(false); setState('unknown'); setOutput('');
-    overseer.executionWorkspace({action: 'status'}).then(result => {
+    overseer.executionWorkspace({action: 'status'}, chatId).then(result => {
       if (current === generation.current) setState(result.state || 'unknown');
     }).catch(error => {if (current === generation.current) setOutput(String(error));});
     return () => {generation.current++;};
-  }, [overseer]);
+  }, [overseer, chatId]);
 
   const perform = async (operation: ExecutionOperation) => {
     const current = generation.current;
     setBusy(true);
     try {
-      const result: ExecutionResult = await overseer.executionWorkspace(operation);
+      const result: ExecutionResult = await overseer.executionWorkspace(operation, chatId);
       if (current !== generation.current) return;
       if (result.state) setState(result.state);
       if (operation.action === 'read') setContent(result.content || '');
@@ -36,8 +36,8 @@ export const ExecutionPanel = ({overseer}: {overseer: RpcStub<Overseer>}) => {
     finally {if (current === generation.current) setBusy(false);}
   };
 
-  return <section aria-label="Linux workspace" className="space-y-3 border-b border-kumo-line p-3 text-kumo-default">
-    <p className="text-sm text-kumo-subtle">Start an isolated Linux workspace to give your agents repository, command and file access. Files persist when suspended. Commands run directly in this workspace.</p>
+  return <section aria-label="RHEL 10 workspace" className="space-y-3 border-b border-kumo-line p-3 text-kumo-default">
+    <p className="text-sm text-kumo-subtle">Start an isolated RHEL 10 workspace to give your agents repository, command and file access. Files persist when suspended. Commands run directly in this workspace.</p>
     <div className="flex flex-wrap items-center gap-2">
       <span role="status">{state}</span>
       <Button disabled={busy} onClick={() => void perform({action: 'start'})}>Start / resume</Button>
@@ -47,7 +47,7 @@ export const ExecutionPanel = ({overseer}: {overseer: RpcStub<Overseer>}) => {
     <form onSubmit={event => {event.preventDefault(); void perform({action: 'exec', command});}} className="flex items-end gap-2">
       <Input label="Shell command" value={command} onChange={event => setCommand(event.target.value)} className="flex-1" />
       <Button type="submit" disabled={busy || state !== 'ready' || !command.trim()}>Run</Button>
-      <Button disabled={busy || state !== 'ready'} onClick={() => void perform({action: 'exec', command: 'git diff --no-ext-diff -- .'})}>Review diff</Button>
+      <Button disabled={busy || state !== 'ready'} onClick={() => void perform({action: 'exec', command: 'git -C repository diff --no-ext-diff -- .'})}>Review diff</Button>
     </form>
     <details>
       <summary className="cursor-pointer">Workspace files</summary>

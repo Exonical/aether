@@ -39,12 +39,22 @@ metadata:
 spec:
   endpointSelector:
     matchLabels: {{- include "aether.selector" . | nindent 6 }}
-  {{- if .Values.gateway.enabled }}
+  {{- if or .Values.gateway.enabled .Values.execution.enabled }}
   ingress:
+    {{- if .Values.gateway.enabled }}
     - fromEntities: [ingress]
       toPorts:
         - ports:
             - {port: "8080", protocol: TCP}
+    {{- end }}
+    {{- if .Values.execution.enabled }}
+    - fromEndpoints:
+        - matchLabels:
+            aether.dev/execution: {{ .Values.tenantId | quote }}
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace | quote }}
+      toPorts:
+        - ports: [{port: '9007', protocol: TCP}]
+    {{- end }}
   {{- end }}
   {{- if or $hasAdapters $egress .Values.execution.enabled }}
   egress:

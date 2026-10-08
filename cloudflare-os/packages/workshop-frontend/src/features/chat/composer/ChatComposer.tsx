@@ -1,3 +1,5 @@
+import type {ChatExecutionSelection} from '@gadgets/workshop-shared/execution-workspace';
+import {ComposerExecutionControls} from '../../execution/ComposerExecutionControls';
 import {
   useState,
   useEffect,
@@ -80,6 +82,7 @@ const applyStateAction = <T,>(value: T, action: SetStateAction<T>): T =>
 export const ChatComposer = ({
   createCapsuleGatekeeper,
   getOverseer,
+  initialExecution,
   onSend,
   isAgentActive,
   models,
@@ -113,12 +116,14 @@ export const ChatComposer = ({
    * to support lazy provisional-gadget creation on the Home page.
    */
   getOverseer: () => Promise<RpcStub<Overseer>> | RpcStub<Overseer>;
+  initialExecution?: ChatExecutionSelection;
   onSend: (
     message: string | SlashCommandRequest,
     modelId: string | null,
     capsules?: CapsuleSpecifier[],
     attachments?: ChatAttachmentHandle[],
     formats?: MessageFormatRef[],
+    execution?: ChatExecutionSelection,
   ) => Promise<void> | void;
   isAgentActive: boolean;
   models: AiChatAuthorInfo[];
@@ -198,6 +203,7 @@ export const ChatComposer = ({
       text: applyStateAction(previous.text, action),
     }));
   };
+  const [execution, setExecution] = useState<ChatExecutionSelection>(() => initialExecution ?? {mode: 'ask', environment: 'rhel10'});
   const [isSending, setIsSending] = useState(false);
   const [catalogVersion, setCatalogVersion] = useState(0);
   // The chat the "may not have been sent" hint belongs to; the render condition scopes it, and
@@ -491,7 +497,7 @@ export const ChatComposer = ({
       await onSend(message, selectedModel?.id ?? null,
           capsuleSpecifiers,
           readyAttachments.length ? readyAttachments : undefined,
-          formatRefs);
+          formatRefs, execution);
       clearSentAttachments(attachmentsSnapshot);
       if (!completeDraftSend(draftSend)) return;
       replaceComposerDocument({ text: "", capsules: [], formats: [], command: null });
@@ -897,6 +903,10 @@ export const ChatComposer = ({
           onRemove={removeAttachment}
         />
 
+        <div className="px-3 pb-1">
+          <ComposerExecutionControls api={authenticatedApi} value={execution} onChange={setExecution}
+            disabled={isSending || isAgentActive || isBlocked} chatId={chatKey} getOverseer={getOverseer} workspaceAvailable={initialExecution?.mode === "agent"} />
+        </div>
         {/* Footer row: connection/options left, model + send right */}
         <div className="flex items-center justify-between gap-1.5 px-3 pb-1.5">
           <div className="flex min-w-0 flex-1 items-center gap-1.5 overflow-hidden">

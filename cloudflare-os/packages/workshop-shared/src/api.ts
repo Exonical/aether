@@ -423,6 +423,13 @@ export interface AuthenticatedApi extends RpcTarget {
   /** Get profile info for the user who is logged in. */
   whoami(): Promise<AiChatAuthorInfo>;
 
+  /** Get trusted execution identity and the caller's redacted Git connections. */
+  getExecutionProfile(): Promise<import('./execution-workspace').ExecutionProfile>;
+  /** Verify and privately store a Git token for an operator-approved provider. */
+  linkGitConnection(providerId: string, token: string): Promise<import('./execution-workspace').GitConnection>;
+  /** Remove the caller's connection and revoke its outstanding repository leases. */
+  removeGitConnection(connectionId: string): Promise<void>;
+
   /** Set the user's own display name, seen in chats, etc. */
   setOwnDisplayName(name: string): Promise<void>;
 
@@ -2327,8 +2334,8 @@ export type AgentSpawnerConfig = {
  * createGadget()/getGadget()).
  */
 export interface Overseer extends RpcTarget {
-  /** Owner-only Linux workspace lifecycle, command and file access. Starting grants agents access. */
-  executionWorkspace(operation: import('./execution-workspace').ExecutionOperation): Promise<import('./execution-workspace').ExecutionResult>;
+  /** Owner-only access to an Agent chat's Kata workspace. Ask chats cannot use this API. */
+  executionWorkspace(operation: import('./execution-workspace').ExecutionOperation, chatId: number): Promise<import('./execution-workspace').ExecutionResult>;
 
   /** Get metadata describing this workspace. */
   getMetadata(): Promise<GadgetMetadata>;
@@ -2709,13 +2716,15 @@ export interface Overseer extends RpcTarget {
    * `modelId` is one of the IDs in the result of `listModels()`, or null to inhibit AI response
    * (useful when using chat to talk between humans).
    *
+   * Missing `execution` defaults to Ask (workerd). Agent requires the owner's verified POSIX identity.
+   *
    * `formats` records where the message names one of the deployment's standard output formats, so
    * the transcript can draw it as a chip. Display only -- what the agent reads is the noun, which
    * is already in the text.
    */
   newChat(initialMessage: string | SlashCommandRequest, modelId: string | null,
           capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-          formats?: MessageFormatRef[]): Promise<number>;
+          formats?: MessageFormatRef[], execution?: import('./execution-workspace').ChatExecutionSelection): Promise<number>;
 
   /**
    * Send a message to the chat from this client. Sending a message causes the LLM to start
@@ -2730,7 +2739,7 @@ export interface Overseer extends RpcTarget {
    */
   sendChatMessage(chatId: number, message: string | SlashCommandRequest, modelId: string | null,
                   capsules?: CapsuleSpecifier[], attachments?: ChatAttachmentHandle[],
-                  formats?: MessageFormatRef[]): Promise<void>;
+                  formats?: MessageFormatRef[], execution?: import('./execution-workspace').ChatExecutionSelection): Promise<void>;
 
   /**
    * Upload an attachment for use in a future chat message. This way by the time the user wants to
@@ -3027,6 +3036,8 @@ export interface Overseer extends RpcTarget {
 }
 
 export type AiChatMetadata = {
+  /** Persisted composer settings; absent on older chats defaults to Ask. */
+  execution?: import('./execution-workspace').ChatExecutionSelection,
   id: number,
   title: string,
   started: Date,

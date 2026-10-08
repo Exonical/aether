@@ -1,3 +1,4 @@
+import type {ChatExecutionSelection} from '@gadgets/workshop-shared/execution-workspace';
 import { classifyRpcError, logRpcFailure, rpcFailureDescription } from "../rpcErrors";
 import { useState, useEffect, useRef, useCallback } from "react";
 import { createFileRoute, useNavigate } from "@tanstack/react-router";
@@ -108,13 +109,14 @@ export function HomePageContent({ prompt }: HomeSearch) {
       capsules?: CapsuleSpecifier[],
       attachments?: ChatAttachmentHandle[],
       formats?: MessageFormatRef[],
+      execution?: ChatExecutionSelection,
     ) => {
       try {
         ensureProvisionalGadget();
         const overseer = provisionalOverseerRef.current!.stub;
         // Pipeline both independent calls in one batch, but settle both before releasing the stub.
         const [chat, {id}] = await Promise.all([
-          overseer.newChat(message, modelId, capsules, attachments, formats),
+          overseer.newChat(message, modelId, capsules, attachments, formats, execution),
           overseer.getMetadata(),
         ]);
         provisionalOverseerRef.current?.stub[Symbol.dispose]();

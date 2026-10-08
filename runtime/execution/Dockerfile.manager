@@ -1,5 +1,5 @@
 FROM node:24.19.0-bookworm-slim
 WORKDIR /opt/aether
-COPY manager.mjs runner.mjs ./
+COPY manager.mjs runner.mjs git-broker.mjs ./
 USER 1000:1000
 CMD ["node", "manager.mjs"]

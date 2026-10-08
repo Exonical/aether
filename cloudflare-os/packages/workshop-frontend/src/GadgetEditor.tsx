@@ -1,4 +1,3 @@
-import {ExecutionPanel} from './features/execution/ExecutionPanel';
 import { useState, useEffect, useCallback, useMemo, useRef, type PointerEvent as ReactPointerEvent } from 'react'
 import { useParams, useNavigate, useSearch, Link } from '@tanstack/react-router'
 import { DropdownMenu, useKumoToastManager } from '@cloudflare/kumo'
@@ -1807,13 +1806,6 @@ export default function GadgetEditor() {
           </DropdownMenu.Content>
         </DropdownMenu>
       </div>
-
-        {overseer && metadata && !metadata.owner && (
-          <details className="max-h-[60%] overflow-auto flex-shrink-0 border-b border-kumo-line">
-            <summary className="cursor-pointer px-4 py-2 text-sm text-kumo-default">Linux workspace</summary>
-            <ExecutionPanel key={id} overseer={overseer.stub} />
-          </details>
-        )}
 
       {/* ═══ BODY ═════════════════════════════════════════════════════════════ */}
       <div className="flex flex-1 min-h-0 relative overflow-hidden">

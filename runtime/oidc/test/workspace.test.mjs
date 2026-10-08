@@ -1,3 +1,6 @@
+import {createServer, request as httpRequest} from 'node:http';
+import {createExecutionFixture} from '../../execution/test/fixture.mjs';
+import {createGitBroker} from '../../execution/git-broker.mjs';
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {spawn} from 'node:child_process';
@@ -47,6 +50,17 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
   const adapter = await createAdapter(config); t.after(()=>adapter.close());
   const port = await adapter.listen(0);
   const stateDir = await mkdtemp(join(tmpdir(),'aether-oidc-')); t.after(()=>rm(stateDir,{recursive:true,force:true}));
+  const gitApi = createServer((req, res) => {
+    const valid = ['admin-token', 'other-token'].includes(req.headers['private-token']);
+    res.writeHead(valid ? 200 : 401, {'content-type':'application/json'});
+    res.end(JSON.stringify({username:req.headers['private-token'] === 'admin-token' ? 'admin' : 'other'}));
+  });
+  await new Promise(resolve => gitApi.listen(0,'127.0.0.1',resolve));
+  t.after(()=>new Promise(resolve=>{gitApi.close(resolve);gitApi.closeAllConnections();}));
+  const gitBroker = createGitBroker({providers:[{id:'internal',label:'Internal GitLab',kind:'gitlab',url:'https://git.internal'}],
+    publicUrl:'http://git-broker.invalid/', request:(url, options, callback)=>httpRequest(`http://127.0.0.1:${gitApi.address().port}${url.pathname}`,options,callback)});
+  const execution = await createExecutionFixture(join(stateDir,'execution'),{gitBroker});
+  t.after(()=>execution.close());
   let child, logs=''; const sockets=[];
   async function stop() {
     for (const [api, socket] of sockets.splice(0)) {api[Symbol.dispose]();socket.close();}
@@ -54,10 +68,10 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     const exited=once(child,'exit');child.kill('SIGTERM');await exited;
   }
   t.after(()=>stop());
-  async function start(departmentsEnabled=true) {
+  async function start(departmentsEnabled=true, executionEnabled=true) {
     child=spawn(process.execPath,[join(root,'run-workspace.mjs')], {env:{...process.env,
       AETHER_BIND_ADDRESS:keycloak ? '0.0.0.0':'127.0.0.1',AETHER_TENANT_ID:'acme',AETHER_STATE_DIR:stateDir,AETHER_PORT:'8080',AETHER_PUBLIC_URL:origin,AETHER_OIDC_PORT:String(port),
-      AETHER_DEPARTMENTS:String(departmentsEnabled),AETHER_OIDC_ALLOW_HTTP:'true',AETHER_ADMINS:'["admin@example.com"]'},stdio:['ignore','pipe','pipe']});
+      AETHER_EXECUTION_ENABLED:String(executionEnabled),AETHER_DEPARTMENTS:String(departmentsEnabled),AETHER_OIDC_ALLOW_HTTP:'true',AETHER_ADMINS:'["admin@example.com"]'},stdio:['ignore','pipe','pipe']});
     child.stdout.on('data',v=>logs+=v);child.stderr.on('data',v=>logs+=v);
     for(let i=0;i<200;i++) {
       if(child.exitCode !== null) break;
@@ -109,11 +123,54 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     let adminApi=await user.getAdminApi();assert.ok(adminApi);
     await user.setOwnDisplayName('Persistent OIDC Admin');
     const gadget=await user.newGadget().getMetadata();
+    const executionProfile=await user.getExecutionProfile();
+    assert.deepEqual(executionProfile.identity,{username:'admin',uid:12345,gid:23456});
+    const ownGit=await user.linkGitConnection('internal','admin-token');
+    assert.equal(ownGit.login,'admin');
+    assert.ok(!JSON.stringify(await user.getExecutionProfile()).includes('admin-token'));
+    const workspace=user.openGadget(gadget.id);
+    const askChat=await workspace.newChat('General chat',null);
+    await assert.rejects(async()=>await workspace.executionWorkspace({action:'start'},askChat),/Agent/i);
+    const agentChat=await workspace.newChat('Coding task',null,undefined,undefined,undefined,{mode:'agent',environment:'rhel10'});
+    const operation=body=>workspace.executionWorkspace(body,agentChat);
+    assert.equal((await operation({action:'start'})).state,'ready');
+    const pod=execution.calls.find(call=>call.body?.kind==='Pod').body;
+    assert.deepEqual(pod.spec.containers[0].env,[{name:'AETHER_EXECUTION_USERNAME',value:'admin'},{name:'AETHER_EXECUTION_UID',value:'12345'},{name:'AETHER_EXECUTION_GID',value:'23456'}]);
+    assert.equal((await operation({action:'exec',command:'git init -q && printf initial > README.md && git add . && git -c user.name=Fixture -c user.email=fixture@example.com commit -qm initial'})).exitCode,0);
+    await operation({action:'write',path:'README.md',content:'agent workspace\n'});
+    await assert.rejects(async()=>await workspace.sendChatMessage(agentChat,'Wrong repository',null,undefined,undefined,undefined,
+      {mode:'agent',environment:'rhel10',git:{connectionId:ownGit.id,repository:'team/another'}}),/new chat/i);
+    await operation({action:'suspend'});
+    await assert.rejects(async()=>await operation({action:'read',path:'README.md'}),/start/i);
+    await operation({action:'start'});
+    assert.equal((await operation({action:'read',path:'README.md'})).content,'agent workspace\n');
+    await workspace.sendChatMessage(agentChat,'Back to chat',null,undefined,undefined,undefined,{mode:'ask',environment:'rhel10'});
+    await assert.rejects(async()=>await operation({action:'exec',command:'echo denied'}),/Agent/i);
+    const disabledChat=await workspace.newChat('Agent selected before administrative disable',null,undefined,undefined,undefined,{mode:'agent',environment:'rhel10'});
+    await stop();await start(true,false);
+    Object.assign(admin,await browser());Object.assign(other,await browser());
+    user=await admin.api.authenticate(token);adminApi=await user.getAdminApi();
+    assert.equal((await user.getExecutionProfile()).enabled,false);
+    const callsBeforeAsk=execution.calls.length;
+    await user.openGadget(gadget.id).sendChatMessage(disabledChat,'Ask still works',null,undefined,undefined,undefined,{mode:'ask',environment:'rhel10'});
+    assert.equal(execution.calls.length,callsBeforeAsk,'Ask must not contact Kubernetes when execution is disabled');
+    await stop();await start();
+    Object.assign(admin,await browser());Object.assign(other,await browser());
+    user=await admin.api.authenticate(token);adminApi=await user.getAdminApi();
     assert.equal((await fetch(signed.callback,{headers:{cookie:admin.cookie}})).status,400);
-    if(issuer) issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com'}});
+    if(issuer) issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',preferred_username:'other',uidNumber:12346}});
     const signedOther=await login(other,'other');assert.ok(signedOther.outcome.token,logs);
     let otherUser=await other.api.authenticate(signedOther.outcome.token);
     assert.equal(await otherUser.getAdminApi(),null);
+    assert.deepEqual((await otherUser.getExecutionProfile()).connections,[]);
+    const otherWorkspace=await otherUser.newGadget().getMetadata();
+    await assert.rejects(async()=>await otherUser.openGadget(otherWorkspace.id).newChat('Cannot borrow account',null,undefined,undefined,undefined,
+      {mode:'agent',environment:'rhel10',git:{connectionId:ownGit.id,repository:'team/project'}}),/own linked/i);
+    const otherGit=await otherUser.linkGitConnection('internal','other-token');
+    await assert.rejects(async()=>await otherUser.removeGitConnection(ownGit.id),/No such/i);
+    await user.removeGitConnection(ownGit.id);
+    assert.deepEqual((await user.getExecutionProfile()).connections,[]);
+    assert.deepEqual((await otherUser.getExecutionProfile()).connections,[otherGit]);
     await assert.rejects(async()=>await otherUser.openGadget(gadget.id).getMetadata(),/access|permission|not found/i);
     const departments = async (client, token, body, expected=200) => {
       const response=await fetch(origin+'/api/departments',{method:body?'POST':'GET',headers:{cookie:client.cookie,origin,
@@ -133,12 +190,12 @@ test('native workspace OIDC: browser binding, password denial, signup policy, ac
     await departments(admin,token,{action:'create',department:'finance',name:'Finance'});
     if(issuer){
       config.departmentClaim='groups';config.departmentMapping={'/Engineering':'engineering','/Finance':'finance'};
-      issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',groups:['/Engineering','admin']}});
+      issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',preferred_username:'other',uidNumber:12346,groups:['/Engineering','admin']}});
       const mappedBrowser=await browser();const mapped=await login(mappedBrowser,'other');assert.ok(mapped.outcome.token);
       const membership=await departments(mappedBrowser,mapped.outcome.token);
       assert.deepEqual(membership.departments.map(d=>d.id),['engineering']);
       assert.equal(membership.departments[0].canManage,false,'Signed groups must never grant admin');
-      issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',groups:[]}});
+      issuer.setScenario({claims:{sub:'other-subject',email:'other@example.com',preferred_username:'other',uidNumber:12346,groups:[]}});
       const removedBrowser=await browser();const removed=await login(removedBrowser,'other');assert.deepEqual((await departments(removedBrowser,removed.outcome.token)).departments,[]);
       config.departmentClaim=undefined;config.departmentMapping={};
     }

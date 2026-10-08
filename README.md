@@ -88,7 +88,7 @@ Use the [S3 and tenant deployment guide](docs/s3-storage.md) for an existing S3-
 
 ## Next implementation milestone
 
-The [Linux agent workspace guide](docs/agent-workspaces.md) adds owner-authorized repository editing, shell commands, tests, and Git diff review in a private pod with retained storage. Next steps are interactive terminals, browser tooling, private Git credential brokering, and resource lifecycle automation. Durable Object and R2 metadata state remain local SQLite; KV can use PostgreSQL, and R2 blobs can use a user-provided S3-compatible endpoint through the private adapter. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
+The [Ask and Agent guide](docs/agent-workspaces.md) describes the chat bar’s mode, environment and per-user Git controls. Ask is the default and uses workerd for chat, docs, slides and sheets. Agent uses a per-chat RHEL 10 Kata environment with the signed-in user’s trusted UID/GID and in-container sudo; Git tokens stay outside the runner. Windows is visible but disabled. Durable Object and R2 metadata state remain local SQLite; KV can use PostgreSQL, and R2 blobs can use a user-provided S3-compatible endpoint through the private adapter. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
 
 | Path | Purpose |
 | --- | --- |
