@@ -153,17 +153,34 @@ spec:
             - {name: AETHER_EXECUTION_PULL_POLICY, value: {{ .Values.execution.runnerImage.pullPolicy | quote }}}
             - {name: AETHER_EXECUTION_RUNTIME_CLASS, value: {{ .Values.execution.runtimeClassName | quote }}}
             - {name: AETHER_EXECUTION_STORAGE_CLASS, value: {{ .Values.execution.storageClassName | quote }}}
+            - {name: AETHER_EXECUTION_IMAGE_PULL_SECRETS, value: {{ .Values.imagePullSecrets | toJson | quote }}}
+            - {name: AETHER_EXECUTION_GIT_PROVIDERS, value: {{ .Values.execution.git.providers | toJson | quote }}}
+            - {name: AETHER_EXECUTION_GIT_URL, value: {{ printf "http://%s-execution-git.%s.svc:9007/" (include "aether.name" .) .Release.Namespace | quote }}}
+            {{- if .Values.execution.git.ca.secretName }}
+            - {name: NODE_EXTRA_CA_CERTS, value: /etc/aether-git-ca/ca.crt}
+            {{- end }}
+          ports:
+            - {name: git-broker, containerPort: 9007}
           resources:
             requests: {cpu: 100m, memory: 128Mi}
             limits: {cpu: '1', memory: 256Mi}
           volumeMounts:
             - {name: execution-kubernetes, mountPath: /var/run/aether-kubernetes, readOnly: true}
+            {{- if .Values.execution.git.ca.secretName }}
+            - {name: execution-git-ca, mountPath: /etc/aether-git-ca, readOnly: true}
+            {{- end }}
           readinessProbe:
             exec:
               command: [node, -e, "fetch('http://127.0.0.1:9005/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
         {{- end }}
       volumes:
         {{- if .Values.execution.enabled }}
+        {{- if .Values.execution.git.ca.secretName }}
+        - name: execution-git-ca
+          secret:
+            secretName: {{ .Values.execution.git.ca.secretName | quote }}
+            items: [{key: {{ .Values.execution.git.ca.key | quote }}, path: ca.crt}]
+        {{- end }}
         - name: execution-kubernetes
           projected:
             defaultMode: 420

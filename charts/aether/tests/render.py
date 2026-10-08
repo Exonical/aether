@@ -111,3 +111,16 @@ assert all("secrets" not in r["resources"] and "pods/exec" not in r["resources"]
 assert not any(d["kind"] == "ClusterRole" for d in docs)
 render({"tenantId": "acme", "execution": {"enabled": True}}, valid=False)
 print("Execution controller, namespace RBAC, projected credentials and policy checks passed")
+
+execution_values["execution"]["git"] = {"providers": [{"id": "internal", "label": "Internal GitLab", "kind": "gitlab", "url": "https://git.internal"}], "ca": {"secretName": "git-ca"}}
+docs = render(execution_values)
+pod = state(docs)["spec"]["template"]["spec"]
+manager = next(c for c in pod["containers"] if c["name"] == "execution-manager")
+assert any(m["name"] == "execution-git-ca" for m in manager["volumeMounts"])
+assert not any(m["name"] == "execution-git-ca" for c in pod["containers"] if c["name"] != "execution-manager" for m in c.get("volumeMounts", []))
+broker = next(d for d in docs if d["kind"] == "Service" and d["metadata"]["name"].endswith("execution-git"))
+assert broker["spec"].get("type", "ClusterIP") == "ClusterIP"
+assert broker["spec"]["ports"][0]["port"] == 9007
+execution_values["execution"]["runtimeClassName"] = ""
+render(execution_values, valid=False)
+print("Private Git broker, provider configuration, CA isolation and required RuntimeClass checks passed")

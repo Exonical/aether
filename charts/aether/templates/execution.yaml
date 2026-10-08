@@ -1,5 +1,14 @@
 {{- if .Values.execution.enabled }}
 apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "aether.name" . }}-execution-git
+  namespace: {{ .Release.Namespace | quote }}
+spec:
+  selector: {{- include "aether.selector" . | nindent 4 }}
+  ports: [{name: git, port: 9007, targetPort: git-broker}]
+---
+apiVersion: v1
 kind: ServiceAccount
 metadata:
   name: {{ include "aether.name" . }}-execution
@@ -50,6 +59,11 @@ spec:
       toPorts:
         - ports: [{port: '9006', protocol: TCP}]
   egress:
+    - toEndpoints:
+        - matchLabels: {{- include "aether.selector" . | nindent 12 }}
+            k8s:io.kubernetes.pod.namespace: {{ .Release.Namespace | quote }}
+      toPorts:
+        - ports: [{port: '9007', protocol: TCP}]
     - toEndpoints:
         - matchLabels:
             k8s:io.kubernetes.pod.namespace: kube-system

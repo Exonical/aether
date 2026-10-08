@@ -679,7 +679,8 @@
           }
         },
         "runtimeClassName": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "storageClassName": {
           "type": "string"
@@ -689,6 +690,64 @@
           "items": {
             "type": "object",
             "minProperties": 1
+          }
+        },
+        "git": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "providers": {
+              "type": "array",
+              "maxItems": 16,
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "id",
+                  "label",
+                  "kind",
+                  "url"
+                ],
+                "properties": {
+                  "id": {
+                    "type": "string",
+                    "pattern": "^[a-z0-9-]{1,64}$"
+                  },
+                  "label": {
+                    "type": "string",
+                    "minLength": 1,
+                    "maxLength": 100
+                  },
+                  "kind": {
+                    "enum": [
+                      "github",
+                      "gitlab"
+                    ]
+                  },
+                  "url": {
+                    "type": "string",
+                    "pattern": "^https://[^/]+/?$"
+                  },
+                  "apiUrl": {
+                    "type": "string",
+                    "pattern": "^https://.*/$"
+                  }
+                }
+              }
+            },
+            "ca": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "secretName": {
+                  "type": "string"
+                },
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              }
+            }
           }
         }
       }
