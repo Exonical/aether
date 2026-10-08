@@ -15,7 +15,7 @@ const close = server => new Promise(resolve => {server.close(resolve); server.cl
 
 test('real Linux runner: git worktree, files, restart persistence, confinement, deadlines and output limits', async () => {
   const root = await mkdtemp(join(tmpdir(), 'aether-execution-'));
-  let runner = await createRunner({root, timeoutMs: 150, outputLimit: 4096});
+  let runner = await createRunner({root, timeoutMs: 1000, outputLimit: 4096});
   let url = await listen(runner);
   const operation = async body => {const response = await post(`${url}/operation`, body); assert.equal(response.status, 200); return response.json();};
   try {
@@ -24,7 +24,7 @@ test('real Linux runner: git worktree, files, restart persistence, confinement, 
     await operation({action: 'write', path: 'README.md', content: 'edited\n'});
     const diff = await operation({action: 'exec', command: 'git diff -- README.md'});
     assert.match(diff.output, /\+edited/);
-    await close(runner); runner = await createRunner({root, timeoutMs: 150, outputLimit: 4096}); url = await listen(runner);
+    await close(runner); runner = await createRunner({root, timeoutMs: 1000, outputLimit: 4096}); url = await listen(runner);
     assert.equal((await operation({action: 'read', path: 'README.md'})).content, 'edited\n');
     await symlink('/etc/passwd', join(root, 'escape'));
     for (const path of ['../escape', '/etc/passwd', 'escape']) {

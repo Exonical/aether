@@ -11,7 +11,7 @@
 <p align="center">
   <a href="https://developers.cloudflare.com/workers/"><img alt="Cloudflare Workers" src="https://img.shields.io/badge/Cloudflare-Workers-F6821F?logo=cloudflare&logoColor=white"></a>
   <a href="https://nodejs.org/"><img alt="Node.js 24.19+" src="https://img.shields.io/badge/Node.js-24.19+-5FA04E?logo=nodedotjs&logoColor=white"></a>
-  <a href="https://pnpm.io/"><img alt="pnpm 11.28.5" src="https://img.shields.io/badge/pnpm-11.28.5-F69220?logo=pnpm&logoColor=white"></a>
+  <a href="https://pnpm.io/"><img alt="pnpm 12.10.1" src="https://img.shields.io/badge/pnpm-12.10.1-F69220?logo=pnpm&logoColor=white"></a>
   <a href="https://www.typescriptlang.org/"><img alt="TypeScript 7" src="https://img.shields.io/badge/TypeScript-7-3178C6?logo=typescript&logoColor=white"></a>
   <a href="https://github.com/cloudflare/cloudflare-os"><img alt="Cloudflare OS upstream" src="https://img.shields.io/badge/upstream-Cloudflare_OS-24292F?logo=github"></a>
 </p>
@@ -62,7 +62,7 @@ Anything past that needs your own code or settings, which is what this repositor
 
 ### 1. Prepare the workspace
 
-Install [Node.js 24.19 or newer](https://nodejs.org/) (the deploy scripts are TypeScript run directly by `node`), [pnpm 11.28.5](https://pnpm.io/installation), and authenticate [Wrangler](https://developers.cloudflare.com/workers/wrangler/commands/#login):
+Install [Node.js 24.19 or newer](https://nodejs.org/) (the deploy scripts are TypeScript run directly by `node`), [pnpm 12.10.1](https://pnpm.io/installation), and authenticate [Wrangler](https://developers.cloudflare.com/workers/wrangler/commands/#login):
 
 ```sh
 pnpm install

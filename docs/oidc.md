@@ -11,7 +11,7 @@ Use Node 24.19+ and Docker Desktop for the Keycloak fixture. These credentials a
 From the repository root, initialize the pinned upstream source and dependencies first:
 
 ```powershell
-npm install --global pnpm@11.28.5
+npm install --global pnpm@12.10.1
 pnpm --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
 npm ci --prefix runtime
 npm ci --prefix runtime/oidc --ignore-scripts

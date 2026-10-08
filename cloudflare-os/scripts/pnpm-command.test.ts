@@ -9,6 +9,18 @@ const PNPM_CJS = "C:\\Users\\dev\\AppData\\Local\\pnpm\\bin\\pnpm.cjs";
 const NPM_CLI = "C:\\Users\\dev\\AppData\\Local\\nvm\\node_modules\\npm\\bin\\npm-cli.js";
 
 describe("pnpmCommand", () => {
+  it("spawns pnpm 12's native Windows entry directly, preserving paths with spaces", () => {
+    const args = ["exec", "node", "C:\\Users\\Some Name\\project\\script.js"];
+    for (const name of ["pnpm.exe", "pnpm-native.exe", "pnpm"]) {
+      const entry = `C:\\Users\\Some Name\\pnpm\\${name}`;
+      assert.deepEqual(pnpmCommand(args, {npm_execpath: entry}, "win32"), [entry, args]);
+    }
+  });
+
+  it("does not attempt to directly spawn a Windows command shim", () => {
+    assert.deepEqual(pnpmCommand(["--version"], {npm_execpath: "C:\\tools\\pnpm.cmd"}, "win32"), ["pnpm", ["--version"]]);
+  });
+
   it("runs pnpm's own entry point through node on Windows", () => {
     const [command, args] = pnpmCommand(["install"], { npm_execpath: PNPM_MJS }, "win32");
     assert.equal(command, process.execPath);

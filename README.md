@@ -6,12 +6,12 @@ A self-hosted AI workspace and application runtime, built on [Cloudflare OS](htt
 
 ## Run the standalone workspace
 
-Requires Git, Node.js **24.19+**, pnpm **11.28.5**, and npm. Build dependencies are installed once; the running server uses only workerd and local disk.
+Requires Git, Node.js **24.19+**, pnpm **12.10.1**, and npm. Build dependencies are installed once; the running server uses only workerd and local disk.
 
 ```sh
 git clone https://github.com/Exonical/aether.git
 cd aether
-npm install --global pnpm@11.28.5
+npm install --global pnpm@12.10.1
 npm ci --prefix runtime
 pnpm --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
 npm run workspace:build --prefix runtime
@@ -25,7 +25,7 @@ The build invokes the compilers directly and uses Wrangler only for offline dry-
 
 ## Upstream development mode
 
-Requires Git, Node.js **24.19+**, and pnpm **11.28.5**. No Cloudflare account is required for default local mode.
+Requires Git, Node.js **24.19+**, and pnpm **12.10.1**. No Cloudflare account is required for default local mode.
 
 ```sh
 git clone https://github.com/Exonical/aether.git
