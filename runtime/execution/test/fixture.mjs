@@ -3,7 +3,7 @@ import {createRunner} from '../runner.mjs';
 import {join} from 'node:path';
 
 /** Real runners with a synthetic Kubernetes control plane for native authentication tests. */
-export async function createExecutionFixture(root) {
+export async function createExecutionFixture(root, {gitBroker} = {}) {
   const objects = new Map(), runners = new Map(), calls = [];
   const api = async (method, path, body) => {
     calls.push({method, path, body});
@@ -31,7 +31,7 @@ export async function createExecutionFixture(root) {
     }
     throw new Error('Unexpected fixture request');
   };
-  const server = createManager({api, tenant: 'acme', namespace: 'aether', image: 'fixture'});
+  const server = createManager({gitBroker, api, tenant: 'acme', namespace: 'aether', image: 'fixture'});
   await new Promise(resolve => server.listen(9005, '127.0.0.1', resolve));
   return {calls, async close() {
     await new Promise(resolve => {server.close(resolve); server.closeAllConnections();});

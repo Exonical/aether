@@ -33,6 +33,7 @@ test('signed OIDC code flow rejects forged, replayed, unverified and cross-tenan
   const success = await begin();
   const identity=await (await post('/complete',success)).json();
   assert.equal(identity.email,'admin@example.com');assert.equal(identity.subject,'user-1');assert.equal(identity.issuer,issuer.origin);
+  assert.deepEqual(identity.posix,{username:'admin',uid:12345,gid:23456});
   assert.equal(identity.sid,'session-1');assert.equal(typeof identity.issuedAt,'number');
   assert.equal((await post('/complete',success)).status,400);
   for (const scenario of [{rogue:true}, {claims:{iss:'https://other.invalid'}}, {claims:{aud:'another-tenant'}},

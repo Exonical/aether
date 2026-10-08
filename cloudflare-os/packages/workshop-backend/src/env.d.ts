@@ -79,6 +79,8 @@ declare global {
 
       /** Private, operator-configured Linux workspace controller. Never bound to Gadget code. */
       AETHER_EXECUTION?: Fetcher;
+      /** Private verified OIDC identity lookup. Never exposed to user code. */
+      AETHER_IDENTITIES?: {executionIdentity(email: string): Promise<import('@gadgets/workshop-shared/execution-workspace').ExecutionIdentity | null>};
       /** Explicit installation-wide enablement. */
       AETHER_EXECUTION_ENABLED?: string;
       /** Stable installation identity attached by the native runtime artifact. */

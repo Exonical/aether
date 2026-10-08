@@ -1,3 +1,4 @@
+import type {ExecutionProfile, GitConnection} from '@gadgets/workshop-shared/execution-workspace';
 import { RpcStub, RpcTarget, newHttpBatchRpcResponse, newWebSocketRpcSession, RpcSessionOptions } from "capnweb";
 import { validateRpc } from "capnweb-validate";
 import type { JWTPayload } from "jose";
@@ -142,6 +143,9 @@ class AuthenticatedApiImpl extends RpcTarget implements AuthenticatedApi {
     // Pure-read delegations retry once across a user-DO reset (see retryOnDoReset); writes never do.
     return retryOnDoReset(() => this.#user.whoami());
   }
+  getExecutionProfile(): Promise<ExecutionProfile> {return retryOnDoReset(() => this.#user.getExecutionProfile());}
+  linkGitConnection(providerId: string, token: string): Promise<GitConnection> {return this.#user.linkGitConnection(providerId, token);}
+  removeGitConnection(connectionId: string): Promise<void> {return this.#user.removeGitConnection(connectionId);}
   setOwnDisplayName(name: string): Promise<void> {
     return this.#user.setOwnDisplayName(name);
   }

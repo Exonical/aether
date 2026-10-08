@@ -30,7 +30,35 @@
         "id.token.signed.response.alg": "RS256",
         "backchannel.logout.url": "http://host.docker.internal:8080/gatekeeper/oidc/backchannel-logout",
         "backchannel.logout.session.required": "true"
-      }
+      },
+      "protocolMappers": [
+        {
+          "name": "uidNumber",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "uidNumber",
+            "claim.name": "uidNumber",
+            "jsonType.label": "long",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        },
+        {
+          "name": "gidNumber",
+          "protocol": "openid-connect",
+          "protocolMapper": "oidc-usermodel-attribute-mapper",
+          "config": {
+            "user.attribute": "gidNumber",
+            "claim.name": "gidNumber",
+            "jsonType.label": "long",
+            "id.token.claim": "true",
+            "access.token.claim": "false",
+            "userinfo.token.claim": "false"
+          }
+        }
+      ]
     }
   ],
   "users": [
@@ -47,7 +75,15 @@
           "value": "aether-test-secret",
           "temporary": false
         }
-      ]
+      ],
+      "attributes": {
+        "uidNumber": [
+          "12345"
+        ],
+        "gidNumber": [
+          "23456"
+        ]
+      }
     },
     {
       "username": "other",
@@ -62,7 +98,15 @@
           "value": "aether-test-secret",
           "temporary": false
         }
-      ]
+      ],
+      "attributes": {
+        "uidNumber": [
+          "12346"
+        ],
+        "gidNumber": [
+          "23456"
+        ]
+      }
     },
     {
       "username": "new",
@@ -77,7 +121,15 @@
           "value": "aether-test-secret",
           "temporary": false
         }
-      ]
+      ],
+      "attributes": {
+        "uidNumber": [
+          "12347"
+        ],
+        "gidNumber": [
+          "23456"
+        ]
+      }
     }
   ]
 }

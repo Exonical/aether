@@ -60,7 +60,7 @@ test('controller scopes pods, retains PVCs, denies identity forgery and refuses 
   };
   const manager = createManager({api, tenant: 'acme', namespace: 'aether', image: 'registry.invalid/runner:fixture', imagePullPolicy: 'Always', maxWorkspaces: 1});
   const url = await listen(manager), id = 'a'.repeat(64), other = 'b'.repeat(64);
-  const operation = async (action, workspace = id, tenant = 'acme') => post(`${url}/v1/workspaces/${workspace}`, {action}, {'x-aether-tenant': tenant});
+  const operation = async (action, workspace = id, tenant = 'acme') => post(`${url}/v1/workspaces/${workspace}`, {action, ...(action === 'start' ? {environment: 'rhel10', identity: {username: 'bryce', uid: 12345, gid: 23456}} : {})}, {'x-aether-tenant': tenant});
   try {
     for (const body of [null, [], 'invalid', {}]) assert.equal((await post(`${url}/v1/workspaces/${id}`, body, {'x-aether-tenant': 'acme'})).status, 400);
     assert.equal((await operation('start', id, 'other')).status, 403);
@@ -70,8 +70,15 @@ test('controller scopes pods, retains PVCs, denies identity forgery and refuses 
     assert.equal(pod.spec.containers[0].imagePullPolicy, 'Always');
     assert.ok(pod.spec.containers[0].readinessProbe.exec.command.join(' ').includes('127.0.0.1:9006/healthz'));
     assert.equal(pod.spec.automountServiceAccountToken, false); assert.equal(pod.spec.runtimeClassName, 'kata');
-    assert.equal(pod.spec.containers[0].securityContext.readOnlyRootFilesystem, true);
-    assert.equal(pod.spec.containers[0].env, undefined);
+    assert.equal(pod.spec.containers[0].securityContext.readOnlyRootFilesystem, false);
+    assert.equal(pod.spec.containers[0].securityContext.allowPrivilegeEscalation, true);
+    assert.deepEqual(pod.spec.containers[0].securityContext.capabilities.drop, ['ALL']);
+    assert.equal(pod.spec.securityContext.fsGroup, 23456);
+    assert.deepEqual(pod.spec.containers[0].env, [{name: 'AETHER_EXECUTION_USERNAME', value: 'bryce'}, {name: 'AETHER_EXECUTION_UID', value: '12345'}, {name: 'AETHER_EXECUTION_GID', value: '23456'}]);
+    for (const identity of [null, {username: 'root', uid: 0, gid: 0}, {username: 'bryce;whoami', uid: 12345, gid: 23456}, {username: 'bryce', uid: '12345', gid: 23456}]) {
+      assert.equal((await post(`${url}/v1/workspaces/${id}`, {action: 'start', environment: 'rhel10', identity}, {'x-aether-tenant': 'acme'})).status, 409);
+    }
+    assert.equal((await post(`${url}/v1/workspaces/${id}`, {action: 'start', environment: 'rhel10', identity: {username: 'alice', uid: 34567, gid: 23456}}, {'x-aether-tenant': 'acme'})).status, 409);
     assert.equal((await operation('exec')).status, 200);
     assert.equal((await operation('suspend')).status, 200);
     assert.equal([...resources.values()].filter(x => x.kind === 'PersistentVolumeClaim').length, 1);

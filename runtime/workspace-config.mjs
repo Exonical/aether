@@ -146,6 +146,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
       {name:"OIDC_PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"},
       {name:"AETHER_OIDC_SESSION_TTL", fromEnvironment:"AETHER_OIDC_SESSION_TTL"},
       {name:"OIDC_SESSIONS", service:{name:"aether:oidc",entrypoint:"SessionRegistry"}},
+      {name:"AETHER_IDENTITIES", service:{name:"aether:oidc",entrypoint:"SessionRegistry"}},
     );
     if (config.name === "router") bindings.push({ name: "ASSETS", service: { name: "aether:assets" } });
     if (config.name === "workshop-backend") {

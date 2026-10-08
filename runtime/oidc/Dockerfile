@@ -2,6 +2,6 @@ FROM node:24-bookworm-slim
 WORKDIR /opt/aether-oidc
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --ignore-scripts && npm cache clean --force
-COPY config.mjs server.mjs ./
+COPY config.mjs server.mjs posix-identity.mjs ./
 USER 10001:10001
 CMD ["node", "server.mjs"]

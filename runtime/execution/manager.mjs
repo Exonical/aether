@@ -3,6 +3,7 @@ import {request as httpsRequest} from 'node:https';
 import {readFile} from 'node:fs/promises';
 import {createHash} from 'node:crypto';
 import {readJson} from './runner.mjs';
+import {createGitBroker} from './git-broker.mjs';
 
 /** A namespace-scoped controller. Kubernetes credentials never enter execution pods. */
 export function kubernetesClient({baseUrl, credentials}) {
@@ -29,8 +30,8 @@ export function kubernetesClient({baseUrl, credentials}) {
   };
 }
 
-export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', imagePullPolicy = 'IfNotPresent', maxWorkspaces = 32}) {
-  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenant) || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(namespace) || !image || !['Always', 'IfNotPresent', 'Never'].includes(imagePullPolicy)) throw new Error('Invalid execution configuration');
+export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', imagePullPolicy = 'IfNotPresent', maxWorkspaces = 32, imagePullSecrets = [], gitBroker = createGitBroker({})}) {
+  if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenant) || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(namespace) || !image || !runtimeClass || !['Always', 'IfNotPresent', 'Never'].includes(imagePullPolicy)) throw new Error('Invalid execution configuration');
   const base = `/api/v1/namespaces/${namespace}`;
   const locks = new Set();
   let provisioning = false;
@@ -63,6 +64,14 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
     let pod = await getPod(name, id);
     if (body.action === 'status') return status(pod);
     if (body.action === 'start') {
+      const user = body.identity;
+      if (body.environment !== 'rhel10' || !user || !/^[a-z_][a-z0-9_-]{0,31}$/.test(user.username) || ['root', 'nobody'].includes(user.username)
+          || !Number.isInteger(user.uid) || user.uid <= 0 || user.uid > 2147483647
+          || !Number.isInteger(user.gid) || user.gid <= 0 || user.gid > 2147483647) throw new Error('Verified identity required');
+      const fingerprint = JSON.stringify([user.username, user.uid, user.gid, 'rhel10', body.git?.providerId ?? null, body.git?.repository ?? null]);
+      metadata.annotations['aether.dev/identity'] = fingerprint;
+      const remote = body.git ? gitBroker.lease(id, body.git) : null;
+      if (!body.git) gitBroker.revokeWorkspace(id);
       // PVCs are retained across suspension; count them to prevent unbounded storage allocation.
       let pvc = await api('GET', `${base}/persistentvolumeclaims/${name}`);
       if (pvc.status === 404) {
@@ -73,21 +82,31 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
       }
       if (![200, 201].includes(pvc.status)) replyError();
       owned(pvc.body, id);
+      if (pvc.body.metadata.annotations?.['aether.dev/identity'] !== fingerprint
+          || (pod && pod.metadata.annotations?.['aether.dev/identity'] !== fingerprint)) throw new Error('Workspace identity or repository changed; create a new chat');
       if (!pod) {
         pod = await call('POST', `${base}/pods`, {apiVersion: 'v1', kind: 'Pod', metadata,
           spec: {automountServiceAccountToken: false, ...(runtimeClass ? {runtimeClassName: runtimeClass} : {}),
-            restartPolicy: 'Always', terminationGracePeriodSeconds: 5,
-            securityContext: {runAsNonRoot: true, runAsUser: 1000, runAsGroup: 1000, fsGroup: 1000, seccompProfile: {type: 'RuntimeDefault'}},
+            restartPolicy: 'Always', terminationGracePeriodSeconds: 5, imagePullSecrets,
+            securityContext: {runAsNonRoot: false, runAsUser: 0, runAsGroup: 0, fsGroup: user.gid, seccompProfile: {type: 'RuntimeDefault'}},
             containers: [{name: 'runner', image, imagePullPolicy,
-              securityContext: {allowPrivilegeEscalation: false, readOnlyRootFilesystem: true, capabilities: {drop: ['ALL']}},
+              securityContext: {allowPrivilegeEscalation: true, readOnlyRootFilesystem: false, capabilities: {drop: ['ALL'], add: ['CHOWN', 'DAC_OVERRIDE', 'SETUID', 'SETGID', 'AUDIT_WRITE']}},
+              env: [{name: 'AETHER_EXECUTION_USERNAME', value: user.username}, {name: 'AETHER_EXECUTION_UID', value: String(user.uid)}, {name: 'AETHER_EXECUTION_GID', value: String(user.gid)}],
               resources: {requests: {cpu: '250m', memory: '256Mi'}, limits: {cpu: '2', memory: '2Gi'}},
               readinessProbe: {exec: {command: ['node', '-e', "fetch('http://127.0.0.1:9006/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]}, periodSeconds: 5},
               volumeMounts: [{name: 'workspace', mountPath: '/workspace'}, {name: 'tmp', mountPath: '/tmp'}]}],
             volumes: [{name: 'workspace', persistentVolumeClaim: {claimName: name}}, {name: 'tmp', emptyDir: {sizeLimit: '1Gi'}}]}});
       }
+      if (remote && status(pod).state === 'ready') {
+        const quote = value => "'" + value.replaceAll("'", "'\"'\"'") + "'";
+        const result = await call('POST', `${base}/pods/${name}:9006/proxy/operation`, {action: 'exec',
+          command: `if [ -d repository/.git ]; then git -C repository remote set-url origin ${quote(remote)}; else git -c credential.helper= -c http.followRedirects=false clone -- ${quote(remote)} repository; fi`});
+        if (result.exitCode !== 0 || result.timedOut) throw new Error('Repository checkout failed');
+      }
       return status(pod);
     }
     if (body.action === 'suspend') {
+      gitBroker.revokeWorkspace(id);
       if (pod) await call('DELETE', `${base}/pods/${name}`, {apiVersion: 'v1', kind: 'DeleteOptions', preconditions: {uid: pod.metadata.uid}});
       return {state: pod ? 'stopping' : 'suspended'};
     }
@@ -98,6 +117,16 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
   return createServer(async (request, response) => {
     const reply = (statusCode, body) => {response.writeHead(statusCode, {'content-type': 'application/json', 'cache-control': 'no-store'}); response.end(JSON.stringify(body));};
     if (request.url === '/healthz' && request.method === 'GET') return reply(200, {ready: true});
+    if (request.headers['x-aether-tenant'] !== tenant) return reply(403, {error: 'Execution access denied'});
+    if (request.url === '/v1/git/providers' && request.method === 'GET') return reply(200, gitBroker.providers());
+    if (['/v1/git/verify', '/v1/git/revoke'].includes(request.url) && request.method === 'POST') {
+      try {
+        const git = await readJson(request, 8192);
+        if (request.url.endsWith('/verify')) return reply(200, await gitBroker.verify(git));
+        if (typeof git.connectionId !== 'string') throw new Error();
+        gitBroker.revoke(git.connectionId); return reply(200, {});
+      } catch {return reply(400, {error: 'Git connection operation failed'});}
+    }
     const match = /^\/v1\/workspaces\/([a-f0-9]{64})$/.exec(request.url);
     if (!match || request.method !== 'POST' || request.headers['x-aether-tenant'] !== tenant) return reply(403, {error: 'Execution access denied'});
     let body;
@@ -115,7 +144,9 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
 
 if (process.argv[1] === new URL(import.meta.url).pathname) {
   const api = kubernetesClient({baseUrl: 'https://kubernetes.default.svc', credentials: '/var/run/aether-kubernetes'});
-  createManager({api, tenant: process.env.AETHER_TENANT_ID, namespace: process.env.AETHER_EXECUTION_NAMESPACE,
+  const gitBroker = createGitBroker({providers: JSON.parse(process.env.AETHER_EXECUTION_GIT_PROVIDERS || '[]'), publicUrl: process.env.AETHER_EXECUTION_GIT_URL});
+  gitBroker.server.listen(9007, '0.0.0.0');
+  createManager({gitBroker, imagePullSecrets: JSON.parse(process.env.AETHER_EXECUTION_IMAGE_PULL_SECRETS || '[]'), api, tenant: process.env.AETHER_TENANT_ID, namespace: process.env.AETHER_EXECUTION_NAMESPACE,
     image: process.env.AETHER_EXECUTION_IMAGE, storageClass: process.env.AETHER_EXECUTION_STORAGE_CLASS,
     imagePullPolicy: process.env.AETHER_EXECUTION_PULL_POLICY || 'IfNotPresent',
     runtimeClass: process.env.AETHER_EXECUTION_RUNTIME_CLASS || 'kata'}).listen(9005, '127.0.0.1');

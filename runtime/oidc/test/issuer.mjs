@@ -37,7 +37,7 @@ export async function createIssuer(tls) {
         res.writeHead(400,{'content-type':'application/json'});return res.end(JSON.stringify({error:'invalid_grant'}));
       }
       const claims = {iss:origin, sub:'user-1', aud:'aether', iat:Math.floor(Date.now()/1000), exp:Math.floor(Date.now()/1000)+300,
-        sid:'session-1', nonce:grant.params.get('nonce'), email:'admin@example.com', email_verified:true, ...grant.scenario.claims};
+        preferred_username:'admin', uidNumber:12345, gidNumber:23456, sid:'session-1', nonce:grant.params.get('nonce'), email:'admin@example.com', email_verified:true, ...grant.scenario.claims};
       const id_token = await new SignJWT(claims).setProtectedHeader({alg:'RS256', kid:'fixture'}).sign(grant.scenario.rogue ? rogue.privateKey : key.privateKey);
       return json({access_token:'fixture-access-token', token_type:'Bearer', expires_in:300, id_token});
     }

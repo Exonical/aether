@@ -4,6 +4,7 @@ const hash = async value => Array.from(new Uint8Array(await crypto.subtle.digest
   .map(v=>v.toString(16).padStart(2,'0')).join('');
 export class SessionRegistry extends WorkerEntrypoint {
   #registry() {return this.ctx.exports.OidcSessions.getByName('sessions');}
+  executionIdentity(email) {return this.#registry().executionIdentity(email);}
   async register(email, secret, identity) {return this.#registry().register(await hash(`${email}:${secret}`),email,identity);}
   async authenticate(token) {const id=await hash(token);await this.#registry().check(id);return id;}
   async principal(token) {return this.#registry().check(await hash(token));}
@@ -29,6 +30,7 @@ export class OidcSessions extends DurableObject {
       CREATE INDEX IF NOT EXISTS sessions_identity ON sessions(issuer,subject,sid);
       CREATE INDEX IF NOT EXISTS sessions_sid ON sessions(issuer,sid,subject);
       CREATE INDEX IF NOT EXISTS sessions_expiry ON sessions(expires);
+      CREATE TABLE IF NOT EXISTS execution_identities (email TEXT PRIMARY KEY, identity TEXT, issued INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS logout_events (id TEXT PRIMARY KEY, expires INTEGER NOT NULL);
       CREATE TABLE IF NOT EXISTS logout_cutoffs (id TEXT PRIMARY KEY, issued INTEGER NOT NULL, expires INTEGER NOT NULL);`);
   }
@@ -49,6 +51,10 @@ export class OidcSessions extends DurableObject {
     const ttl=Number(this.env.SESSION_TTL);
     if(!Number.isInteger(ttl) || ttl<60 || ttl>86400 || !identity || typeof identity.issuer !== 'string'
         || typeof identity.subject !== 'string' || !Number.isInteger(identity.issuedAt)) throw new Error('Invalid OIDC session');
+    const posix = identity.posix;
+    if (posix && (!/^[a-z_][a-z0-9_-]{0,31}$/.test(posix.username) || ['root','nobody'].includes(posix.username)
+        || !Number.isInteger(posix.uid) || posix.uid <= 0 || posix.uid > 2147483647
+        || !Number.isInteger(posix.gid) || posix.gid <= 0 || posix.gid > 2147483647)) throw new Error('Invalid execution identity');
     const subjectKey=await hash(JSON.stringify([identity.issuer,'sub',identity.subject]));
     const sidKey=identity.sid ? await hash(JSON.stringify([identity.issuer,'sid',identity.sid])) : null;
     const sidSubjectKey=identity.sid ? await hash(JSON.stringify([identity.issuer,'sid-sub',identity.sid,identity.subject])) : null;
@@ -60,7 +66,16 @@ export class OidcSessions extends DurableObject {
     if(this.#sql('SELECT COUNT(*) AS count FROM sessions').one().count>=100000) throw new Error('Session capacity exhausted');
     this.#sql('INSERT INTO sessions(id,email,issuer,subject,sid,issued,expires) VALUES(?,?,?,?,?,?,?)',
       id,email,identity.issuer,identity.subject,identity.sid ?? null,identity.issuedAt,Date.now()+ttl*1000);
+    this.#sql(`INSERT INTO execution_identities(email,identity,issued) VALUES(?,?,?) ON CONFLICT(email) DO UPDATE SET
+      identity=excluded.identity,issued=excluded.issued WHERE excluded.issued>=execution_identities.issued`,
+      email, posix ? JSON.stringify({username:posix.username,uid:posix.uid,gid:posix.gid}) : null, identity.issuedAt);
     this.#alarm();
+  }
+  executionIdentity(email) {
+    // Require a current, unrevoked login before allocating a new Agent workspace.
+    if (!this.#sql('SELECT id FROM sessions WHERE email=? AND revoked=0 AND expires>? LIMIT 1',email,Date.now()).toArray().length) return null;
+    const row=this.#sql('SELECT identity FROM execution_identities WHERE email=?',email).toArray()[0];
+    return row?.identity ? JSON.parse(row.identity) : null;
   }
   check(id) {
     const session=this.#sql('SELECT email,revoked,expires FROM sessions WHERE id=?',id).toArray()[0];
