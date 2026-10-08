@@ -1,3 +1,4 @@
+import type {ExecutionOperation, ExecutionResult} from '@gadgets/workshop-shared/execution-workspace';
 import { AiChatMessage, AiChatAuthorInfo, AiToolCall, AiChatMessageBody, AiChatStreamEvent, BlueprintBinding, BlueprintMerge, BlueprintOutput, ChatGadgetPin, ChatGadgetPinRecord, MainlineMergeGadget, WorkpieceId, type AiModelConfig, isTextLikeAttachmentMimeType, validateBindingName } from '@gadgets/workshop-shared/api';
 import { applyCodeChange, codeChangeSerializedSize, replaceSpanChange, type CodeContent,
   type CodeChange, type FileChange } from '@gadgets/workshop-shared/code-change';
@@ -511,6 +512,10 @@ export interface AgentHooks {
                    bindings: Record<string, ChatBindingEntry>,
                    onOutputText?: (delta: string) => void,
                    worktreeTurn?: WorktreeTurnAccess): Promise<string>;
+  /** Whether this owner-initiated turn has a Linux workspace grant. */
+  executionWorkspaceEnabled?(chatId: number): Promise<boolean>;
+  /** Execute a bounded operation under that workspace grant. */
+  agentWorkspaceOperation?(chatId: number, operation: ExecutionOperation): Promise<ExecutionResult>;
   consumeCapturedActions(chatId: number)
       : {actions: number[], accessedGadget: boolean, awaitDecision: boolean} | undefined;
   emitChatStreamEvent(chatId: number, event: AiChatStreamEvent): void;
@@ -3817,6 +3822,32 @@ async function runAgentPass(
       }
     }),
   };
+
+  if (!agentContext.spawnerConfig && await hooks.executionWorkspaceEnabled?.(chatId)) {
+    tools.workspace = defineTool({
+      name: 'workspace', label: 'Linux workspace',
+      description: 'Run shell commands, read/write text files, list directories, or check status in the persistent Linux workspace. Commands have a 60-second deadline and bounded output. Paths are relative to /workspace. Use exec with git clone to obtain a repository, then git diff to review changes and project commands to test them. This is separate from Gadget source files. Network destinations are controlled by the deployment. Do not place credentials in commands or file contents.',
+      parameters: Type.Object({
+        action: Type.Union(['status', 'exec', 'read', 'write', 'list'].map(value => Type.Literal(value))),
+        command: Type.Optional(Type.String()), path: Type.Optional(Type.String()), content: Type.Optional(Type.String()),
+      }),
+      execute: async (toolCallId, input) => {
+        try {
+          let operation: ExecutionOperation;
+          switch (input.action) {
+            case 'status': operation = {action: 'status'}; break;
+            case 'exec': if (input.command === undefined) throw new Error('command required'); operation = {action: 'exec', command: input.command}; break;
+            case 'read': case 'list': if (input.path === undefined) throw new Error('path required'); operation = {action: input.action, path: input.path}; break;
+            case 'write': if (input.path === undefined || input.content === undefined) throw new Error('path and content required'); operation = {action: 'write', path: input.path, content: input.content}; break;
+            default: throw new Error('Unknown workspace operation');
+          }
+          const raw = JSON.stringify(await hooks.agentWorkspaceOperation!(chatId, operation));
+          const output = raw.length > MAX_TOOL_RESULT_CHARS ? raw.slice(0, MAX_TOOL_RESULT_CHARS) + '\n[Output truncated; use a narrower command or file range.]' : raw;
+          return toolResult(output, {output});
+        } catch (error) {toolCallNotes.set(toolCallId, {error: toolErrorText(error)}); throw error;}
+      },
+    });
+  }
 
   if (agentContext.spawnerConfig) {
     // Restrict sub-agents to a narrower set of tools. No user is present to approve changes, so

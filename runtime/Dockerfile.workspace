@@ -14,7 +14,7 @@ RUN apt-get update \
     && chown -R aether:aether /var/lib/aether
 COPY --from=binary /build/node_modules/workerd/bin/workerd /usr/local/bin/workerd
 COPY dist/workspace/ /opt/aether/
-ENV AETHER_DEPARTMENTS=false AETHER_PUBLIC_URL=http://localhost:8080
+ENV AETHER_EXECUTION_ENABLED=false AETHER_DEPARTMENTS=false AETHER_PUBLIC_URL=http://localhost:8080
 USER 10001:10001
 WORKDIR /opt/aether
 EXPOSE 8080

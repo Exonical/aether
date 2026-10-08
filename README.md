@@ -88,7 +88,7 @@ Use the [S3 and tenant deployment guide](docs/s3-storage.md) for an existing S3-
 
 ## Next implementation milestone
 
-Add Authentik sign-in, then implement R2 metadata migration and browser rendering. Durable Object and R2 metadata state remain local SQLite; KV can use PostgreSQL, and R2 blobs can use a user-provided S3-compatible endpoint through the private adapter. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
+The [Linux agent workspace guide](docs/agent-workspaces.md) adds owner-authorized repository editing, shell commands, tests, and Git diff review in a private pod with retained storage. Next steps are interactive terminals, browser tooling, private Git credential brokering, and resource lifecycle automation. Durable Object and R2 metadata state remain local SQLite; KV can use PostgreSQL, and R2 blobs can use a user-provided S3-compatible endpoint through the private adapter. [Architecture and port plan](docs/self-hosting.md) describe the binding inventory and acceptance criteria.
 
 | Path | Purpose |
 | --- | --- |
@@ -103,7 +103,7 @@ For deployment to Cloudflare's managed platform, use the preserved [hosted deplo
 
 ## Validation
 
-`npm test --prefix runtime` launches real workerd processes and checks service binding routing, native WorkerLoader operation, denied Gadget-style ambient networking, 24 concurrent SQLite updates, method handling, and state after restart. CI also renders both Kubernetes overlays, builds the image, and checks startup with a read-only filesystem. `npm run workspace:test --prefix runtime` verifies real upstream password authentication over HTTP and WebSocket, account isolation, Context/Scheduler provisioning, asset serving, avatars through KV, bundled Blueprints through R2, and workspace/admin persistence after restart. Workspace CI also builds and starts the native image. A cluster rollout, scheduled callback delivery, and model-driven Gadget creation remain untested.
+`npm test --prefix runtime` launches real workerd processes and checks service binding routing, native WorkerLoader operation, denied Gadget-style ambient networking, 24 concurrent SQLite updates, method handling, and state after restart. CI also renders both Kubernetes overlays, builds the image, and checks startup with a read-only filesystem. `npm run workspace:test --prefix runtime` verifies real upstream password authentication over HTTP and WebSocket, account isolation, Context/Scheduler provisioning, asset serving, avatars through KV, bundled Blueprints through R2, and workspace/admin persistence after restart. Workspace CI also builds and starts the native image and Linux runner, checks owner-only execution through authenticated RPC, and exercises the agent tool with a scripted model. A cluster rollout, scheduled callback delivery, and model-driven Gadget creation remain untested.
 
 ## License
 

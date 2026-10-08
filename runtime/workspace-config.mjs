@@ -151,6 +151,9 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
     if (config.name === "workshop-backend") {
       bindings.push(
         { name: "ADMINS", fromEnvironment: "AETHER_ADMINS" },
+        { name: "AETHER_EXECUTION_ENABLED", fromEnvironment: "AETHER_EXECUTION_ENABLED" },
+        { name: "AETHER_EXECUTION_TENANT", text: namespace.startsWith("aether-tenant-") ? namespace.slice("aether-tenant-".length) : "local" },
+        { name: "AETHER_EXECUTION", service: {name: "aether:execution-endpoint"} },
         { name: "PUBLIC_BASE_URL", fromEnvironment: "AETHER_PUBLIC_URL" },
         { name: "DEPARTMENTS_ENABLED", fromEnvironment: "AETHER_DEPARTMENTS" },
         { name: "DEPARTMENTS", service:{name:"aether:departments",entrypoint:"DepartmentDirectory"} },
@@ -191,6 +194,7 @@ export async function createWorkspaceConfig({ workers, assetManifest, namespace,
         {name:"oidc-browser.js", esModule:await readFile(join(root, "src/oidc-browser.js"), "utf8")}],
       bindings: [...(oidc ? [{name:"OIDC_PUBLIC_URL", fromEnvironment:"AETHER_PUBLIC_URL"}] : []), { name: "DEPARTMENTS_ENABLED", fromEnvironment: "AETHER_DEPARTMENTS" }, { name: "DEPARTMENTS", service: { name: "aether:departments" } }, { name: "ROUTER", service: { name: "router" } }, kvBindings.find(binding => binding.name === "BLUEPRINTS")],
     } },
+    {name: "aether:execution-endpoint", external: {address: "127.0.0.1:9005", http: {}}},
     { name: "internet", network: { allow: [] } },
   );
   // Shared application department directory; disabled unless explicitly configured with OIDC.

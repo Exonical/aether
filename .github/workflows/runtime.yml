@@ -27,6 +27,7 @@ jobs:
           cache-dependency-path: runtime/package-lock.json
       - run: npm ci --prefix runtime
       - run: npm test --prefix runtime
+      - run: node --test runtime/execution/test/*.test.mjs
       - run: npm test --prefix runtime/models
       - name: Render Kubernetes manifests
         run: |
@@ -94,10 +95,10 @@ jobs:
       - run: pnpm --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
       - name: Build the previous main artifact for storage upgrade verification
         run: |
-          mkdir -p /tmp/aether-baseline
           baseline_sha="$BASE_SHA"
           if ! git cat-file -e "$baseline_sha^{commit}" 2>/dev/null; then baseline_sha=origin/main; fi
-          git archive "$baseline_sha" runtime cloudflare-os | tar -x -C /tmp/aether-baseline
+          # Keep Git provenance available for builds from the editable source fork.
+          git worktree add --detach /tmp/aether-baseline "$baseline_sha"
           # Historical revisions used a gitlink; newer revisions contain the fork's source.
           if [ "$(git ls-tree "$baseline_sha" cloudflare-os | awk '{print $1}')" = 160000 ]; then
             baseline_upstream_sha=$(git ls-tree "$baseline_sha" cloudflare-os | awk '{print $3}')
@@ -117,6 +118,22 @@ jobs:
         env:
           AETHER_TENANT_ID: acme
           AETHER_MODEL_GATEWAY: 'true'
+      - name: Check fork types and owner-authorized agent tools
+        run: |
+          pnpm --dir cloudflare-os/packages/workshop-backend --pm-on-fail=ignore exec tsc --noEmit
+          pnpm --dir cloudflare-os/packages/workshop-frontend --pm-on-fail=ignore exec tsc --noEmit
+          pnpm --dir cloudflare-os/packages/workshop-backend --pm-on-fail=ignore exec vitest run __tests__/spawned-agent-tools.test.ts
+      - name: Build Linux workspace images
+        run: |
+          docker build -f runtime/execution/Dockerfile.runner -t aether-runner:ci runtime/execution
+          docker build -f runtime/execution/Dockerfile.manager -t aether-execution:ci runtime/execution
+      - name: Verify hardened Linux runner container
+        run: |
+          docker run -d --name execution-runner --read-only --cap-drop=ALL --security-opt=no-new-privileges --tmpfs /tmp:uid=1000,gid=1000 --tmpfs /workspace:uid=1000,gid=1000 -p 127.0.0.1:9006:9006 aether-runner:ci
+          trap 'docker logs execution-runner; docker rm -f execution-runner' EXIT
+          curl --fail --retry 20 --retry-all-errors --retry-delay 1 http://127.0.0.1:9006/healthz
+          curl --fail -H 'Content-Type: application/json' -d '{"action":"exec","command":"git --version && python3 --version && printf persisted > file"}' http://127.0.0.1:9006/operation | tee /tmp/runner-result.json
+          node -e 'const r = require("/tmp/runner-result.json"); if (r.exitCode !== 0) process.exit(1)'
       - name: Verify pinned model SDK with scoped native transport
         run: npm test --prefix runtime/models
         env:
@@ -125,6 +142,7 @@ jobs:
         run: npm run workspace:test --prefix runtime
         env:
           AETHER_TEST_PREVIOUS_BUILD_DIR: /tmp/aether-previous-workspace
+          AETHER_TEST_EXECUTION: 'true'
       - name: Verify full workspace with PostgreSQL KV
         run: npm run workspace:test --prefix runtime
         env:

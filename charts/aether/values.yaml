@@ -116,3 +116,20 @@ oidc:
 tenantId: ''
 departments:
   enabled: false
+
+# Optional isolated Linux workspaces; requires OIDC and departments in this chart.
+execution:
+  enabled: false
+  managerImage:
+    repository: registry.example.com/aether/execution-manager
+    tag: 0.1.0
+    digest: ''
+    pullPolicy: IfNotPresent
+  runnerImage:
+    repository: registry.example.com/aether/execution-runner
+    tag: 0.1.0
+    digest: ''
+    pullPolicy: IfNotPresent
+  runtimeClassName: kata
+  storageClassName: ''
+  egress: []

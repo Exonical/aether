@@ -46,3 +46,7 @@ Keep release name, namespace, installation ID and PVC stable. Back up the comple
 This replaces the unmerged fleet chart's `tenants[]` format with one application's values. Do not upgrade an installed fleet directly: plan which workspace/PVC to retain and migrate state explicitly. Existing Kustomize workloads also require deliberate Helm ownership/PVC migration. Never run concurrent writers on a state directory.
 
 CI lints/packages the chart and checks all 16 adapter combinations, storage, private ports/CA mounts, Gateway modes, department prerequisites and invalid settings. Live cluster, storage and external service validation remain deployment checks.
+
+## Linux agent workspaces
+
+See the [agent workspace guide](../../docs/agent-workspaces.md) for the optional `execution.enabled` controller and retained runner PVCs. Execution requires OIDC departments, Cilium network policies, and a configured Kata runtime. Build and publish both execution images before enabling it.

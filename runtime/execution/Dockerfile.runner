@@ -1,0 +1,7 @@
+FROM node:24.19.0-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates python3 && rm -rf /var/lib/apt/lists/*
+WORKDIR /opt/aether
+COPY runner.mjs ./
+USER 1000:1000
+EXPOSE 9006
+CMD ["node", "runner.mjs"]

@@ -94,3 +94,20 @@ render({"tenants":[{"tenantId":"acme","namespace":"aether-acme"}]},valid=False)
 long=state(render({"tenantId":"a"*63},"r"*53))
 assert len(long["spec"]["selector"]["matchLabels"]["app.kubernetes.io/instance"])<=63
 print("Shared application chart: 16 adapter combinations, Gateway, storage, Secrets, departments and invalid settings passed")
+
+# Linux workspace controller credentials are mounted only in its sidecar.
+execution_values = {"tenantId": "acme", "departments": {"enabled": True},
+                    "oidc": {"enabled": True, "existingSecret": "oidc", "publicUrl": "https://acme.example", "egress": [{"toFQDNs": [{"matchName": "idp.example"}]}]},
+                    "execution": {"enabled": True}}
+docs = render(execution_values)
+pod = state(docs)["spec"]["template"]["spec"]
+assert pod["automountServiceAccountToken"] is False
+manager = next(c for c in pod["containers"] if c["name"] == "execution-manager")
+assert manager["securityContext"]["readOnlyRootFilesystem"] is True
+assert any(m["name"] == "execution-kubernetes" for m in manager["volumeMounts"])
+assert not any(m["name"] == "execution-kubernetes" for c in pod["containers"] if c["name"] != "execution-manager" for m in c.get("volumeMounts", []))
+role = next(d for d in docs if d["kind"] == "Role")
+assert all("secrets" not in r["resources"] and "pods/exec" not in r["resources"] for r in role["rules"])
+assert not any(d["kind"] == "ClusterRole" for d in docs)
+render({"tenantId": "acme", "execution": {"enabled": True}}, valid=False)
+print("Execution controller, namespace RBAC, projected credentials and policy checks passed")

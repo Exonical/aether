@@ -26,6 +26,8 @@ if (manifest.oidc) {
   if (!Number.isInteger(ttl) || ttl < 60 || ttl > 86400) throw new Error("OIDC session TTL must be 60–86400 seconds");
   if (!process.env.AETHER_ADMINS) throw new Error("OIDC requires explicit AETHER_ADMINS verified email list (or [])");
 }
+process.env.AETHER_EXECUTION_ENABLED ||= "false";
+if (!["true", "false"].includes(process.env.AETHER_EXECUTION_ENABLED)) throw new Error("Invalid execution enablement");
 process.env.AETHER_DEPARTMENTS ||= "false";
 if(!["true","false"].includes(process.env.AETHER_DEPARTMENTS) || (process.env.AETHER_DEPARTMENTS === "true" && !manifest.oidc)) throw new Error("Departments require an OIDC artifact");
 process.env.AETHER_PUBLIC_URL ||= "http://127.0.0.1:8080";
