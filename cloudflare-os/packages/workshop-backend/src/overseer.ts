@@ -2489,9 +2489,10 @@ class OverseerImpl implements AgentHooks {
     let gatekeeperId = await this.ctx.storage.get<number>(key);
     const launch = await this.ownerUserDo().getExecutionLaunch(selection);
     await this.assertExecutionLaunch(chatId, launch);
-    if (gatekeeperId === undefined || !this.storage.gatekeepers.get(gatekeeperId)) {
+    const existingScope = gatekeeperId === undefined ? undefined : this.storage.gatekeepers.get(gatekeeperId)?.creationSpec;
+    if (gatekeeperId === undefined || existingScope?.type !== 'agentGit' || existingScope.connectionId !== selection.connectionId) {
       gatekeeperId = this.allocateWorkpieceId();
-      this.storage.gatekeepers.put({id: gatekeeperId, creationSpec: {type: 'agentGit', chatId},
+      this.storage.gatekeepers.put({id: gatekeeperId, creationSpec: {type: 'agentGit', chatId, connectionId: selection.connectionId},
         resourceTitle: `Agent Git: ${selection.repository}`, resourceUrl: 'http://agent-git.local/',
         class: this.ctx.exports.AgentGitGatekeeper({props: {ownerId: this.ownerId, workspace, selection, identity: executionLaunchKey(launch)}})});
       await this.ctx.storage.put(key, gatekeeperId);

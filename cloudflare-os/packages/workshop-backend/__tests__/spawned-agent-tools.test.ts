@@ -106,8 +106,8 @@ describe('owner-authorized Linux workspace tools', () => {
       const chatId = 1;
       impl.storage.chatMeta.put({id: chatId, title: 'Git task', execution: {mode: 'agent', environment: 'rhel10', git: {connectionId: 'owned', repository: 'team/project'}}, started: new Date(), lastActive: new Date()});
       impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
-      impl.users.get = () => ({getExecutionLaunch: async () => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
-        git: {connectionId: 'owned', providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
+      impl.users.get = () => ({getExecutionLaunch: async (selection: {connectionId: string}) => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
+        git: {connectionId: selection.connectionId, providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
       const bytes = concatBytes(await buildPackBytes(FIXTURE_OBJECTS.map(object => ({type: object.type, payload: b64Bytes(object.payload)}))));
       let pack = btoa(String.fromCharCode(...bytes));
       const calls: string[] = [];
@@ -142,8 +142,8 @@ describe('owner-authorized Linux workspace tools', () => {
       const chatId = 1;
       impl.storage.chatMeta.put({id: chatId, title: 'Git task', execution: {mode: 'agent', environment: 'rhel10', git: {connectionId: 'owned', repository: 'team/project'}}, started: new Date(), lastActive: new Date()});
       impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
-      impl.users.get = () => ({getExecutionLaunch: async () => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
-        git: {connectionId: 'owned', providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
+      impl.users.get = () => ({getExecutionLaunch: async (selection: {connectionId: string}) => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
+        git: {connectionId: selection.connectionId, providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
       const calls: any[] = [];
       impl.env = {...impl.env, AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
         AETHER_EXECUTION: {fetch: async (url: string, init: RequestInit) => {
@@ -177,6 +177,12 @@ describe('owner-authorized Linux workspace tools', () => {
       const metadata = impl.storage.chatMeta.get(chatId); metadata.execution.mode = 'ask'; impl.storage.chatMeta.put(metadata);
       await expect(impl.agentGitOperation(chatId, {action: 'status', id: result.id})).rejects.toThrow('Owner-started');
       expect(calls).toHaveLength(1);
+      metadata.execution.mode = 'agent'; metadata.execution.git.connectionId = 'replacement'; impl.storage.chatMeta.put(metadata);
+      impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
+      await impl.agentGitOperation(chatId, {action: 'pull-request', branch: 'fix/next', base: 'main', title: 'Next fix', body: 'New account scope'});
+      const newest = [...impl.storage.actions.list()].filter((action: any) => action.type === 'action').at(-1) as any;
+      expect(newest.gatekeeperId).not.toBe(record.gatekeeperId);
+      expect(impl.storage.gatekeepers.get(newest.gatekeeperId).creationSpec.connectionId).toBe('replacement');
     });
   });
 

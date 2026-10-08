@@ -4838,6 +4838,8 @@ export type PreApprovableAction = {
 export type GatekeeperCreationSpec = {
   /** Private owner-only Git approval facet created for a selected Agent chat. */
   type: 'agentGit';
+  /** Owner-selected connection ID; changing accounts creates a new approval facet. */
+  connectionId: string;
   /** The chat whose initial repository selection grants this facet its scope. */
   chatId: number;
 } | {
