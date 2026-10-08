@@ -58,6 +58,7 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm peers check
       - run: node --test 'scripts/**/*.test.ts'
+      - run: node --test cloudflare-os/scripts/pnpm-command.test.ts
       - run: pnpm run types:scripts
       - run: pnpm --filter custom-gatekeeper test:run
       - run: pnpm --filter error-reporter test:run

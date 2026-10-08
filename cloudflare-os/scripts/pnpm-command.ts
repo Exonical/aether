@@ -9,13 +9,15 @@
 // the callers pass absolute paths built from the checkout location -- on a checkout whose path
 // contains a space (`C:\Users\Some Name\...`) those arguments break apart.
 //
-// `npm_execpath` is the way out: under `pnpm run` it holds pnpm's own JS entry point, which `node`
-// executes directly with no shell, so every argument keeps its exact value. Under `npm run` the same
+// pnpm 12 uses a native executable; pnpm 11 uses a JS entry.
+// `npm_execpath` is the way out: under `pnpm run` it identifies pnpm's own entry point, which is
+// spawned directly if native, or through Node if JavaScript. Neither needs a shell. Under `npm run` the same
 // variable points at npm's CLI instead, so it is checked before being used -- substituting it
 // unchecked would silently run `npm install` against a pnpm workspace.
 
 // pnpm's JS entry, as `npm_execpath` spells it (`.cjs` or `.mjs` depending on how pnpm was
 // installed). npm's `npm-cli.js` and the standalone `pnpm.exe`/`pnpm.cmd` shims do not match.
+const PNPM_NATIVE_ENTRY = /[\\/]pnpm(?:-native)?(?:\.exe)?$/i;
 const PNPM_JS_ENTRY = /[\\/]pnpm\.[cm]?js$/i;
 
 /**
@@ -33,6 +35,7 @@ export function pnpmCommand(
   platform: NodeJS.Platform = process.platform,
 ): [string, string[]] {
   const execPath = env.npm_execpath ?? "";
+  if (platform === "win32" && PNPM_NATIVE_ENTRY.test(execPath)) return [execPath, args];
   return platform === "win32" && PNPM_JS_ENTRY.test(execPath)
     ? [process.execPath, [execPath, ...args]]
     : ["pnpm", args];
