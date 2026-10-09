@@ -1147,6 +1147,9 @@ export function makeOverseerStorage(storage: DurableObjectStorage) {
       // action text for restricted data. The key on disk predates the flag's rename.
       containsRestrictedData: singleton(false, {storageKey: "prohibitAllSharing"}),
 
+      // Durable fail-closed publication guard; cleared only after the remote outcome is known.
+      gitPublicationActionId: <number | undefined>undefined,
+
       // True if any past observation was authorized that had the `ownerInvitesOnly` flag set in
       // its `ObservationDescription`. Share links stop working and only the owner can add
       // collaborators (enforced by SharingManager).

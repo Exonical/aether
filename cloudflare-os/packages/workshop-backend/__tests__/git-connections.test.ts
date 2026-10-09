@@ -25,6 +25,17 @@ const environment = (calls: {path: string; body: any}[], beforeExchange?: () => 
 } as Cloudflare.Env);
 
 describe('private, user-owned Git OAuth grants', () => {
+  it('enforces deployment vendor and resource policy at the Agent Git minting chokepoint', async () => {
+    await runInDurableObject(env.TEST_USER.getByName(`git-policy-${++counter}`), async instance => {
+      const user = instance as any;
+      const input = {agentGit: {workspace: 'a'.repeat(64), selection: {connectionId: 'owned', repository: 'team/project'}}};
+      for (const config of [{disabledGatekeepers: ['agent-git']}, {disabledResources: {'agent-git': ['http://agent-git.local/*']}}]) {
+        user.env = {...user.env, BLUEPRINTS: {get: async () => JSON.stringify(config)}};
+        await expect(instance.getGatekeeperClassFor(input, 'http://agent-git.local/')).rejects.toThrow('disabled by an administrator');
+      }
+    });
+  });
+
   it('binds one-use state to the user and never returns tokens or verifiers', async () => {
     const calls: {path: string; body: any}[] = [], config = environment(calls);
     const owner = env.TEST_USER.getByName(`git-owner-${++counter}`), other = env.TEST_USER.getByName(`git-other-${counter}`);

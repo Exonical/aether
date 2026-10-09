@@ -59,7 +59,7 @@ export const GitConnectionDialog = ({api, profile, selection, onProfileChange, o
           </DropdownMenu>
           {provider?.oauth ? <>
             <p className="text-xs text-kumo-subtle">Authorize your account on {provider.label}. Credentials stay outside the environment.</p>
-            {provider.kind === 'github' && <p className="text-xs text-kumo-subtle">GitHub Enterprise OAuth grants the repo scope. Aether's environment broker permits repository reads only.</p>}
+            {provider.kind === 'github' && <p className="text-xs text-kumo-subtle">GitHub Enterprise OAuth grants the repo scope. Aether keeps credentials outside the environment. External writes require owner approval.</p>}
             <Button type="button" disabled={busy} onClick={() => void perform(async () => {
               oauth.current = openGitOAuth(api, providerId);
               let linkedId: string;

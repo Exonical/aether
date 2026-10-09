@@ -54,3 +54,5 @@ See the [Ask and Agent guide](../../docs/agent-workspaces.md) for composer contr
 For GitLab Self-Managed or GitHub Enterprise Server OAuth, configure the approved internal origins and `execution.git.oauth.existingSecret`. The Secret contains a provider-ID map of client credentials and mounts only in the controller. See [Enterprise Git OAuth](../../docs/enterprise-git-oauth.md) for callback registration, internal CA/egress settings and token lifecycle. Public GitHub/GitLab origins are rejected.
 
 Agent runner pods suspend after 30 idle minutes by default. `execution.idleTimeoutSeconds` accepts 0 (disabled) through 604800 (seven days). Starts and shell/file operations renew the deadline; status polling does not. PVCs survive suspension, and the next Agent turn resumes the workspace. The controller needs namespace-scoped pod list/patch permissions to reconcile activity across restarts.
+
+Agent Git writes are opt-in through `execution.git.allowWrites` and require owner Gatekeeper approval. See [Agent security](../../docs/agent-security.md) for scopes, DNS policy, reconnect requirements, and artifact limits.

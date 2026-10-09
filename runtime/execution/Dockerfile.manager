@@ -1,5 +1,6 @@
 FROM node:24.19.0-bookworm-slim
+RUN apt-get update && apt-get install -y --no-install-recommends git ca-certificates && rm -rf /var/lib/apt/lists/*
 WORKDIR /opt/aether
-COPY manager.mjs runner.mjs git-broker.mjs git-providers.mjs git-oauth.mjs ./
+COPY manager.mjs runner.mjs git-broker.mjs git-providers.mjs git-oauth.mjs git-actions.mjs ./
 USER 1000:1000
 CMD ["node", "manager.mjs"]

@@ -96,3 +96,49 @@ export interface ExecutionResult {
   /** At most 200 directory entries. */
   entries?: {/** Entry name. */ name: string; /** Whether this entry is a directory. */ directory: boolean}[];
 }
+
+/** Owner-scoped Git actions; branch names do not confer authority to another repository. */
+export type AgentGitOperation =
+  | {
+    /** Capture and queue the current local HEAD for an approved remote push. */
+    action: 'push';
+    /** Task branch suffix, normalized into the chat's remote namespace. */
+    branch: string;
+    /** Existing remote branch whose history the new task branch derives from. */
+    base: string;
+  }
+  | {
+    /** Queue a same-repository pull request; never merges it. */
+    action: 'pull-request';
+    /** The task branch previously pushed through this chat's Gatekeeper. */
+    branch: string;
+    /** Existing remote target branch. */
+    base: string;
+    /** Exact title shown for approval and sent to the provider. */
+    title: string;
+    /** Exact body shown for approval and sent to the provider. */
+    body: string;
+  }
+  | {
+    /** Read the redacted state of a previously queued action. */
+    action: 'status';
+    /** Action ID returned by this chat's Git tool. */
+    id: number;
+  };
+
+/** Redacted approval state and the resulting commit or enterprise pull request URL. */
+export interface AgentGitResult {
+  /** Facet-local action ID returned by the Git tool. */
+  id: number;
+  /** External writes stay pending until the owner approves. */
+  state: 'pending' | 'approved' | 'rejected';
+  /** Provider-confirmed outcome; never contains credentials or a Git pack. */
+  result?: {
+    /** Exact commit confirmed pushed to the remote. */
+    head?: string;
+    /** Chat-scoped destination branch, including while awaiting approval. */
+    branch?: string;
+    /** Same-origin enterprise pull request URL confirmed by the provider. */
+    url?: string;
+  };
+}

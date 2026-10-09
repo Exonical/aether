@@ -1,5 +1,5 @@
 import type {ExecutionProfile, GitConnection, GitOAuthStart, GitProvider, GitRepositorySelection} from '@gadgets/workshop-shared/execution-workspace';
-import {executionGit, type ExecutionLaunch} from './execution-workspace';
+import {executionGit, executionLaunchKey, type ExecutionLaunch} from './execution-workspace';
 import {GitConnections} from './git-connections';
 import { RpcStub } from "capnweb";
 import { GadgetMetadataWithTimestamps, AiChatAuthorInfo, AiModelConfig, RedactedAiModelConfig, CollaboratorRole, ConnectedAccountsSubscriber, ConnectedAccountsFilter, GatekeeperVendorFilter, GadgetMetadata, BlueprintMetadata, BlueprintLibrarySummary, BlueprintSource, BlueprintUserSummary, BLUEPRINT_SCREENSHOT_R2_PREFIX, GatekeeperVendorInfo, OutputSummary, ListOutputsResult, AUTH_ERROR_CODES, createAuthError, ConnectFlowStart, validateCommitEmail } from '@gadgets/workshop-shared/api';
@@ -1868,9 +1868,19 @@ export class UserDurableObject extends DurableObject<Cloudflare.Env> {
     await this.#armHandoffSweep();
   }
 
-  async getGatekeeperClassFor(accountId: number, url: string)
+  async getGatekeeperClassFor(accountId: number | {agentGit: {workspace: string; selection: GitRepositorySelection}}, url: string)
       : Promise<{class: DurableObjectClass<Gatekeeper<any>>, vendorId: string,
                   typeUrlPattern: string}> {
+    if (typeof accountId !== 'number') {
+      const config = await readAdminConfig(this.env);
+      const vendorId = 'agent-git', typeUrlPattern = 'http://agent-git.local/*';
+      if (config.disabledGatekeepers.includes(vendorId) || ambientGatekeeperMode(config, vendorId) === 'disabled'
+          || isResourceDisabled(config, vendorId, typeUrlPattern)) throw new Error('Agent Git is disabled by an administrator');
+      const {workspace, selection} = accountId.agentGit;
+      const launch = await this.getExecutionLaunch(selection);
+      return {class: this.ctx.exports.AgentGitGatekeeper({props: {ownerId: this.ctx.id.toString(), workspace, selection,
+        identity: executionLaunchKey(launch)}}), vendorId, typeUrlPattern};
+    }
     let account = this.storage.connectedAccounts.get(accountId);
     if (!account) throw new Error("No such account.");
     let {class: cls, resource} = await account.account.getGatekeeperClassFor(url);

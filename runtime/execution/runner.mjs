@@ -3,6 +3,7 @@ import {spawn} from 'node:child_process';
 import {realpath, open, mkdir, readdir} from 'node:fs/promises';
 import {constants} from 'node:fs';
 import {resolve, dirname, relative, isAbsolute} from 'node:path';
+import {runGit, branchName} from './git-actions.mjs';
 
 export async function readJson(request, limit = 600000) {
   let size = 0; const chunks = [];
@@ -53,6 +54,14 @@ export async function createRunner({root, timeoutMs = 60000, outputLimit = 10485
     child.once('close', finish);
   });
   const operation = async body => {
+    if (body.action === 'git-snapshot') {
+      const cwd = await filePath('repository');
+      if (!branchName(body.base)) throw new Error('Existing base branch required');
+      const anchor = (await runGit(['rev-parse', '--verify', `refs/remotes/origin/${body.base}^{commit}`], {cwd})).toString().trim();
+      const head = (await runGit(['rev-parse', '--verify', 'HEAD^{commit}'], {cwd})).toString().trim();
+      const pack = await runGit(['pack-objects', '--stdout', '--revs', '--window=0'], {cwd, input: `${head}\n^${anchor}\n`, limit: 2097152});
+      return {head, anchor, pack: pack.toString('base64')};
+    }
     if (body.action === 'exec') return execute(body.command);
     if (body.action === 'list') {
       const path = body.path === '.' ? root : await filePath(body.path);

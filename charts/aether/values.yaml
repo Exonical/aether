@@ -31,6 +31,7 @@ gateway:
   tlsSecretName: ''
   parentRefs: []
 networkPolicy:
+  clusterDomain: cluster.local
   enabled: true
   allowSameNamespace: false
   extraEgress: []
@@ -136,6 +137,8 @@ execution:
   idleTimeoutSeconds: 1800
   # Git services are approved by the administrator; each user links their own token.
   git:
+    # External writes require Gatekeeper approval; reconnect GitLab OAuth after enabling.
+    allowWrites: false
     providers: []
     # Example: [{id: gitlab, label: Internal GitLab, kind: gitlab, url: 'https://git.example.com'}]
     ca:

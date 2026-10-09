@@ -96,10 +96,11 @@ networkPolicy:
 ```
 
 Merge that egress example with your other adapter rules. Git provider traffic
-originates from the application/controller pod; runners reach the private broker,
-DNS and destinations in `execution.egress`. Add runner rules for approved package
-mirrors and development endpoints. The chart's `imagePullSecrets` also apply to
-execution pods.
+originates from the application/controller pod. Runners reach only the private
+broker and DNS for its exact service name; `execution.egress` must stay empty.
+Use prebuilt images containing required dependencies. Arbitrary development
+endpoints are unavailable from the runner. The chart's `imagePullSecrets` also
+apply to execution pods.
 
 Use self-hosted GitHub Enterprise Server (`kind: github`) or GitLab Self-Managed
 (`kind: gitlab`). APIs default to the configured origin's `/api/v3/` and `/api/v4/`
@@ -169,8 +170,7 @@ the shell's process group are killed at exit. Text operations are limited to
 that isolated container. Dispatched commands can finish after stop/logout or
 membership changes; existing background-agent lifetime rules still apply. There
 is no per-command approval or filesystem rollback. Interactive terminals, Windows,
-Repository/branch discovery, GitHub App installation permissions, push/MR
-publication and automatic PVC cleanup remain future work.
+Repository/branch discovery, GitHub App installation permissions, larger incremental Git artifacts, and automatic PVC cleanup remain future work. Owner-approved push/MR publication is covered in [Agent security](agent-security.md).
 
 ## Validation
 
@@ -185,3 +185,7 @@ They check trusted identities, account ownership, Ask denial, persistence and mo
 switching through real workerd RPC. Broker tests perform a private Git clone. CI
 builds the RHEL 10 image and checks actual UID/GID, username and sudo behavior. The
 synthetic controller fixtures do not validate a live Kata cluster.
+
+## Approved enterprise Git writes
+
+Agents may change local branches and commit. External pushes and PRs use Gatekeeper approval rather than sandbox credentials; see [Agent security](agent-security.md). `execution.egress` must remain empty, and sandbox DNS is limited to its private Git broker.

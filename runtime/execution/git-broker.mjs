@@ -2,13 +2,14 @@ import {createServer} from 'node:http';
 import {request as httpsRequest} from 'node:https';
 import {randomBytes} from 'node:crypto';
 import {gitProviders} from './git-providers.mjs';
+import {createGitActions} from './git-actions.mjs';
 
 const repositoryPath = value => typeof value === 'string' && value.length <= 256
   && /^[a-zA-Z0-9_-][a-zA-Z0-9_.-]*(\/[a-zA-Z0-9_-][a-zA-Z0-9_.-]*)+$/.test(value)
   && value.split('/').every(part => !part.endsWith('.git') && part !== '..');
 
 /** Credentials stay in the controller. Execution pods can only fetch one selected repository. */
-export function createGitBroker({providers = [], publicUrl, request = httpsRequest, now = Date.now, oauth}) {
+export function createGitBroker({providers = [], publicUrl, request = httpsRequest, now = Date.now, oauth, allowWrites = false, actions = createGitActions({request})}) {
   const approved = gitProviders(providers);
   const leases = new Map();
   const revoked = new Map();
@@ -80,7 +81,18 @@ export function createGitBroker({providers = [], publicUrl, request = httpsReque
     upstream.on('error', () => {if (!outgoing.headersSent) outgoing.writeHead(502); outgoing.end();});
     outgoing.on('close', () => upstream.destroy()); incoming.pipe(upstream);
   });
+  let actionInFlight = false;
+  const action = async (operation, {workspace, git, action: payload}) => {
+    prune();
+    const provider = credentials(git);
+    if (!allowWrites || typeof git.connectionId !== 'string' || !git.connectionId || git.connectionId.length > 64 || revoked.has(git.connectionId) || !repositoryPath(git.repository)) throw new Error('Git writes are disabled or revoked');
+    if (actionInFlight) throw new Error('Git controller busy');
+    actionInFlight = true;
+    try {return await actions[operation](provider, git, workspace, payload, () => {prune(); if (revoked.has(git.connectionId)) throw new Error('Git connection revoked');});}
+    finally {actionInFlight = false;}
+  };
   return {server, verify, lease, revokeWorkspace,
+    prepareAction: body => action('prepare', body), applyAction: body => action('apply', body),
     rotate: connectionId => {for (const [id, item] of leases) if (item.connectionId === connectionId) leases.delete(id);},
     oauth,
     providers: () => [...approved.values()].map(({id, label, kind}) => ({id, label, kind, ...(oauth?.enabled(id) ? {oauth: true} : {})})),
