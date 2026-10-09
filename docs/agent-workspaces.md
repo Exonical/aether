@@ -208,3 +208,5 @@ synthetic controller fixtures do not validate a live Kata cluster.
 Agents may change local branches and commit. External pushes and PRs use Gatekeeper approval rather than sandbox credentials; see [Agent security](agent-security.md). `execution.egress` must remain empty, and sandbox DNS is limited to its private Git broker.
 
 For actual cluster validation, use the [on-prem acceptance procedure](on-prem-acceptance.md).
+
+For controller health, diagnostics and audit events, see [execution operations](execution-operations.md).

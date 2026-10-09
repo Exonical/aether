@@ -183,7 +183,9 @@ spec:
             {{- end }}
           readinessProbe:
             exec:
-              command: [node, -e, "fetch('http://127.0.0.1:9005/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+              command: [node, -e, "fetch('http://127.0.0.1:9005/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            timeoutSeconds: 5
+            periodSeconds: 10
         {{- end }}
       volumes:
         {{- if .Values.execution.enabled }}

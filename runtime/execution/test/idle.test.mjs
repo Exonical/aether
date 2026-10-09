@@ -59,8 +59,8 @@ function fixture({idleTimeoutSeconds = 30, retentionSeconds = 0} = {}) {
     }
     throw new Error('Unexpected API request');
   };
-  const create = ({idleCheckIntervalMs, gitBroker = {revokeWorkspace: workspace => revoked.push(workspace)}} = {}) => createManager({api, tenant: 'acme', namespace: 'aether', image: 'fixture', idleTimeoutSeconds, retentionSeconds, idleCheckIntervalMs,
-    now: () => clock, gitBroker});
+  const create = ({idleCheckIntervalMs, log = noop, gitBroker = {revokeWorkspace: workspace => revoked.push(workspace)}} = {}) => createManager({api, tenant: 'acme', namespace: 'aether', image: 'fixture', idleTimeoutSeconds, retentionSeconds, idleCheckIntervalMs,
+    now: () => clock, gitBroker, log});
   return {resources, calls, revoked, create, advance: ms => {clock += ms;}, setProxy: handler => {proxy = handler;},
     failNextDelete: () => {failDelete = true;}, onDelete: handler => {deleted = handler;},
     finishDeletingPod: () => {finishDeletion = true;}};
@@ -278,5 +278,28 @@ test('terminal recovery revokes old Git lease before creating the replacement le
     [...f.resources.values()].find(x => x.kind === 'Pod').status = {phase: 'Failed'};
     await operation('start', id, git);
     assert.deepEqual(events, ['revoke', 'lease']);
+  } finally {await close(server);}
+});
+
+
+test('lifecycle events and bounded status reasons omit raw Kubernetes messages', async () => {
+  const f = fixture({retentionSeconds: 60}), events = [];
+  const server = f.create({log: event => events.push(event)}), operation = await client(server);
+  try {
+    await operation('start');
+    const pod = [...f.resources.values()].find(x => x.kind === 'Pod');
+    for (const [status, reason] of [
+      [{conditions: [{type: 'PodScheduled', status: 'False', message: 'do-not-log'}]}, 'SCHEDULING_BLOCKED'],
+      [{containerStatuses: [{state: {waiting: {reason: 'ImagePullBackOff', message: 'do-not-log'}}}]}, 'IMAGE_PULL_FAILED'],
+      [{containerStatuses: [{state: {waiting: {reason: 'CrashLoopBackOff', message: 'do-not-log'}}}]}, 'RUNNER_CRASH_LOOP'],
+    ]) {
+      pod.status = status;
+      const response = await operation('status');
+      assert.equal(response.reason, reason);
+      assert.doesNotMatch(JSON.stringify(response), /do-not-log/);
+    }
+    await operation('suspend'); f.advance(60000); await server.cleanupRetainedWorkspaces();
+    assert.deepEqual(events.map(e => e.event), ['workspace.started', 'workspace.suspended', 'workspace.retired']);
+    assert.doesNotMatch(JSON.stringify(events), /do-not-log/);
   } finally {await close(server);}
 });

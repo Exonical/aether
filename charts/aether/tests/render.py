@@ -176,3 +176,5 @@ for retention in [0, 86400, 31536000]:
 for key, values in [("retentionSeconds", [-1, 31536001, 1.5]), ("maxWorkspaces", [0, 10001, 1.5])]:
     for value in values:
         render({**execution_values, "execution": {**execution_values["execution"], key: value}}, valid=False)
+
+assert "9005/readyz" in manager["readinessProbe"]["exec"]["command"][-1]
