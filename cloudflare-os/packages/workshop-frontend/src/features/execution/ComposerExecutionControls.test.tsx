@@ -7,6 +7,8 @@ import type {RpcStub} from 'capnweb';
 import type {AuthenticatedApi, Overseer} from '@gadgets/workshop-shared/api';
 import type {ChatExecutionSelection, ExecutionProfile} from '@gadgets/workshop-shared/execution-workspace';
 import {ComposerExecutionControls} from './ComposerExecutionControls';
+import {ComposerModeSelector} from './ComposerModeSelector';
+import {useExecutionProfile} from './useExecutionProfile';
 
 (globalThis as {IS_REACT_ACT_ENVIRONMENT?: boolean}).IS_REACT_ACT_ENVIRONMENT = true;
 Element.prototype.scrollIntoView ??= () => {};
@@ -23,11 +25,13 @@ const mount = async (result = profile) => {
   const selected = vi.fn<(value: ChatExecutionSelection) => void>();
   const Harness = () => {
     const [value, setValue] = useState<ChatExecutionSelection>({mode: 'ask', environment: 'rhel10'});
-    return <ComposerExecutionControls api={api} value={value} disabled={false} onChange={next => {selected(next); setValue(next);}} getOverseer={() => ({} as RpcStub<Overseer>)} />;
+    const {profile: loadedProfile, setProfile, unavailable} = useExecutionProfile(api);
+    const onChange = (next: ChatExecutionSelection) => {selected(next); setValue(next);};
+    return <><ComposerModeSelector value={value} disabled={false} onChange={onChange} unavailable={unavailable} /><ComposerExecutionControls api={api} value={value} disabled={false} profile={loadedProfile} onProfileChange={setProfile} unavailable={unavailable} onChange={onChange} getOverseer={() => ({} as RpcStub<Overseer>)} /></>;
   };
   container = document.createElement('div'); document.body.append(container); root = createRoot(container);
   await act(async () => root.render(<Harness />));
-  return {selected, linkGitConnection};
+  return {selected, linkGitConnection, getExecutionProfile};
 };
 const click = async (selector: string) => {
   const element = document.querySelector<HTMLElement>(selector); expect(element).not.toBeNull();
@@ -45,10 +49,10 @@ const input = async (label: string, value: string) => {
 };
 
 it('defaults to Ask, offers RHEL 10 in Agent, disables Windows, and links the caller’s Git account', async () => {
-  const {selected, linkGitConnection} = await mount();
-  expect(container.querySelector('[aria-label="Select chat mode"]')?.textContent).toBe('Ask');
+  const {selected, linkGitConnection, getExecutionProfile} = await mount();
+  expect(container.querySelector('[aria-label="Chat mode"] button[aria-pressed="true"]')?.textContent).toBe('Ask');
   expect(container.querySelector('[aria-label="Select environment"]')).toBeNull();
-  await click('[aria-label="Select chat mode"]'); await menu('Agent');
+  await click('[aria-label="Chat mode"] button:first-child');
   expect(selected).toHaveBeenLastCalledWith({mode: 'agent', environment: 'rhel10'});
   await click('[aria-label="Select environment"]');
   const windows = [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent?.startsWith('Windows'));
@@ -62,14 +66,20 @@ it('defaults to Ask, offers RHEL 10 in Agent, disables Windows, and links the ca
   const save = [...document.querySelectorAll<HTMLButtonElement>('button')].find(button => button.textContent === 'Use repository');
   await act(async () => save!.click());
   expect(selected).toHaveBeenLastCalledWith({mode: 'agent', environment: 'rhel10', git: {connectionId: 'my-account', repository: 'team/project'}});
+  await click('[aria-label="Chat mode"] button:last-child');
+  expect(selected).toHaveBeenLastCalledWith({mode: 'ask', environment: 'rhel10', git: {connectionId: 'my-account', repository: 'team/project'}});
+  expect(container.querySelector('[aria-label="Select environment"]')).toBeNull();
+  await click('[aria-label="Chat mode"] button:first-child');
+  expect(container.querySelector('[aria-label="Select Git connector"]')?.textContent).toBe('team/project');
+  expect(getExecutionProfile).toHaveBeenCalledTimes(1);
 });
 
 it('keeps Ask available and explains why Agent needs IdP UID/GID claims', async () => {
   await mount({...profile, identity: null});
-  await click('[aria-label="Select chat mode"]');
-  const agent = [...document.querySelectorAll('[role="menuitem"]')].find(item => item.textContent?.startsWith('Agent'));
-  expect(agent?.getAttribute('aria-disabled')).toBe('true');
+  const agent = container.querySelector<HTMLButtonElement>('[aria-label="Chat mode"] button:first-child');
+  expect(agent?.disabled).toBe(true);
+  await click('[aria-label="Chat mode"] button:first-child');
   expect(document.body.textContent).toContain('UID/GID');
-  await menu('Ask');
-  expect(container.querySelector('[aria-label="Select chat mode"]')?.textContent).toBe('Ask');
+  await click('[aria-label="Chat mode"] button:last-child');
+  expect(container.querySelector('[aria-label="Chat mode"] button[aria-pressed="true"]')?.textContent).toBe('Ask');
 });
