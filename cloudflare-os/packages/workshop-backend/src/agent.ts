@@ -3875,21 +3875,23 @@ async function runAgentPass(
       parameters: Type.Object({action: Type.Union(['push', 'pull-request', 'status'].map(value => Type.Literal(value))),
         branch: Type.Optional(Type.String()), base: Type.Optional(Type.String()), title: Type.Optional(Type.String()),
         body: Type.Optional(Type.String()), id: Type.Optional(Type.Number())}),
-      execute: async (_toolCallId, input) => {
-        let operation: AgentGitOperation;
-        if (input.action === 'status') {
-          if (!Number.isSafeInteger(input.id) || input.id! < 1) throw new Error('Action id required');
-          operation = {action: 'status', id: input.id!};
-        } else {
-          if (!input.branch || !input.base) throw new Error('Task branch and base required');
-          if (input.action === 'push') operation = {action: 'push', branch: input.branch, base: input.base};
-          else {
-            if (!input.title || input.body === undefined) throw new Error('Title and body required');
-            operation = {action: 'pull-request', branch: input.branch, base: input.base, title: input.title, body: input.body};
+      execute: async (toolCallId, input) => {
+        try {
+          let operation: AgentGitOperation;
+          if (input.action === 'status') {
+            if (!Number.isSafeInteger(input.id) || input.id! < 1) throw new Error('Action id required');
+            operation = {action: 'status', id: input.id!};
+          } else {
+            if (!input.branch || !input.base) throw new Error('Task branch and base required');
+            if (input.action === 'push') operation = {action: 'push', branch: input.branch, base: input.base};
+            else {
+              if (!input.title || input.body === undefined) throw new Error('Title and body required');
+              operation = {action: 'pull-request', branch: input.branch, base: input.base, title: input.title, body: input.body};
+            }
           }
-        }
-        const output = JSON.stringify(await hooks.agentGitOperation!(chatId, operation));
-        return toolResult(output, {output});
+          const output = JSON.stringify(await hooks.agentGitOperation!(chatId, operation));
+          return toolResult(output, {output});
+        } catch (error) {toolCallNotes.set(toolCallId, {error: toolErrorText(error)}); throw error;}
       },
     });
     tools = {workspace: tools.workspace, git_action: tools.git_action};

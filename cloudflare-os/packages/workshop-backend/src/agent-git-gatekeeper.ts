@@ -48,6 +48,7 @@ export class AgentGitGatekeeper extends DurableObject<Cloudflare.Env, AgentGitPr
   /** Stage only a controller-verified, bounded immutable artifact before submitting its approval. */
   async stage(request: AgentGitPrepared): Promise<number> {
     return this.ctx.storage.transaction(async storage => {
+      if (await storage.get('retired')) throw new Error('Git facet retired');
       const pending = await storage.list<StoredAction>({prefix: 'action.'});
       if ([...pending.values()].filter(item => item.state === 'pending').length >= 8) throw new Error('Too many pending Git actions');
       const id = (await storage.get<number>('next')) ?? 1;
@@ -73,6 +74,7 @@ export class AgentGitGatekeeper extends DurableObject<Cloudflare.Env, AgentGitPr
     if (item?.state === 'approved') return;
     if (!item || item.state === 'rejected' || Date.now() - item.created > 86400000) throw new Error('Git action expired or rejected');
     const user = this.ctx.exports.UserDurableObject.get(this.ctx.exports.UserDurableObject.idFromString(this.ctx.props.ownerId));
+    await user.getGatekeeperClassFor({agentGit: {workspace: this.ctx.props.workspace, selection: this.ctx.props.selection}}, 'http://agent-git.local/');
     const launch = await user.getExecutionLaunch(this.ctx.props.selection);
     if (executionLaunchKey(launch) !== this.ctx.props.identity) throw new Error('Agent identity changed');
     const parts: string[] = [];
@@ -106,6 +108,18 @@ export class AgentGitGatekeeper extends DurableObject<Cloudflare.Env, AgentGitPr
     const item = await this.ctx.storage.get<StoredAction>(`action.${id}`);
     if (!item) throw new Error('Unknown Git action');
     return {id, state: item.state, result: {branch: item.request.branch, ...item.result}};
+  }
+
+  /** Destroy all private artifacts before removing this chat's facet. */
+  async retire(): Promise<void> {
+    await Promise.all(this.#applying.values());
+    // Facet storage cannot use deleteAll(): delete its own keys without touching the parent DO.
+    await this.ctx.storage.put('retired', true);
+    while (true) {
+      const keys = [...(await this.ctx.storage.list({limit: 1000})).keys()].filter(key => key !== 'retired');
+      if (!keys.length) break;
+      await this.ctx.storage.delete(keys);
+    }
   }
 
   async #removePack(id: number, chunks: number): Promise<void> {

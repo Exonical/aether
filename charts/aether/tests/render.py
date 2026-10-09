@@ -156,3 +156,8 @@ manager = next(c for c in state(render(execution_values))['spec']['template']['s
 assert {e['name']:e['value'] for e in manager['env']}['AETHER_EXECUTION_GIT_WRITES'] == 'true'
 assert any(m['name'] == 'execution-git-tmp' for m in manager['volumeMounts'])
 print('Agent write opt-in, private controller scratch, broker-only egress and DNS bypass rejection passed')
+
+for domain in ['cluster..local', 'a' * 64 + '.local', '-cluster.local', 'cluster-.local', 'cluster.local.']:
+    render({**execution_values, 'networkPolicy': {'clusterDomain': domain}}, valid=False)
+render({**execution_values, 'networkPolicy': {'clusterDomain': 'a' * 63 + '.internal'}})
+print('Cluster domain label boundary checks passed')

@@ -5,7 +5,7 @@
 // scripted.
 
 import { describe, expect, it } from "vitest";
-import { env } from "cloudflare:workers";
+import { env, RpcStub as NativeRpcStub } from "cloudflare:workers";
 import { runInDurableObject } from "cloudflare:test";
 import {
   createFauxCore, fauxAssistantMessage, fauxText, fauxToolCall, getCurrentTools,
@@ -32,7 +32,7 @@ const GADGET_ID = 100;
 
 let doCounter = 0;
 
-async function withImpl(fn: (impl: any) => Promise<void>): Promise<void> {
+async function withImpl(fn: (impl: any, instance: OverseerDurableObject) => Promise<void>): Promise<void> {
   let stub = env.TEST_OVERSEER.getByName(`spawned-agent-tools-${++doCounter}`);
   await runInDurableObject(stub, async (instance: OverseerDurableObject) => {
     let impl = (instance as unknown as { impl: any }).impl;
@@ -43,7 +43,7 @@ async function withImpl(fn: (impl: any) => Promise<void>): Promise<void> {
     };
     // The turn is driven by hand below, not by the spawn.
     impl.startAgent = () => {};
-    await fn(impl);
+    await fn(impl, instance);
   });
 }
 
@@ -101,13 +101,52 @@ function toolCalls(impl: any, chatId: number): AiToolCall[] {
 }
 
 describe('owner-authorized Linux workspace tools', () => {
-  it('imports sandbox packs without granting new commits remote provenance and blocks stale sensitive approvals', async () => {
+  it('holds restricted observations until in-flight pushes finish and refuses a later push', async () => {
     await withImpl(async impl => {
+      let entered!: () => void, release!: () => void;
+      const started = new Promise<void>(resolve => {entered = resolve;});
+      const held = new Promise<void>(resolve => {release = resolve;});
+      impl.getGatekeeperFacet = async () => ({applyAction: async () => {entered(); await held;}});
+      const record = {id: 100, gatekeeperId: 1, action: 1, type: 'action', state: 'pending', caller: {from: 'user'},
+        createdAt: new Date(), description: {title: 'Push', description: 'Captured pack', pushedCommits: [COMMIT_2]}};
+      const push = impl.applyPendingAction(record, OWNER, false);
+      await started;
+      let delivered = false;
+      const observation = impl.authorizeObservation(1, {title: 'Sensitive', description: 'Private data', containsRestrictedData: true}, {from: 'user'})
+        .then(() => {delivered = true;});
+      await new Promise(resolve => setTimeout(resolve, 0));
+      expect(delivered).toBe(false);
+      expect(impl.storage.containsRestrictedData.get()).toBe(false);
+      release(); await push; await observation;
+      expect(delivered).toBe(true);
+      expect(impl.storage.containsRestrictedData.get()).toBe(true);
+      await expect(impl.applyPendingAction({...record, id: 101, state: 'pending'}, OWNER, false)).rejects.toThrow('sensitive');
+      impl.storage.containsRestrictedData.put(false);
+      const ambiguous = {...record, id: 102, state: 'pending'};
+      impl.storage.actions.put(ambiguous);
+      impl.getGatekeeperFacet = async () => ({applyAction: async () => {throw new Error('Unknown remote outcome');}});
+      await expect(impl.applyPendingAction(ambiguous, OWNER, false)).rejects.toThrow('Unknown remote outcome');
+      expect(impl.storage.gitPublicationActionId.get()).toBe(102);
+      expect(() => impl.removeGatekeeper(1)).toThrow('pending Git publication');
+      await expect(impl.authorizeObservation(1, {title: 'Sensitive', description: 'Private data', containsRestrictedData: true}, {from: 'user'})).rejects.toThrow('outcome unresolved');
+      expect(impl.storage.containsRestrictedData.get()).toBe(false);
+      impl.getGatekeeperFacet = async () => ({applyAction: async () => {}});
+      await impl.applyPendingAction(ambiguous, OWNER, false);
+      expect(impl.storage.gitPublicationActionId.get()).toBeUndefined();
+      await impl.authorizeObservation(1, {title: 'Sensitive', description: 'Private data', containsRestrictedData: true}, {from: 'user'});
+      expect(impl.storage.containsRestrictedData.get()).toBe(true);
+
+    });
+  });
+
+  it('imports sandbox packs without granting new commits remote provenance and blocks stale sensitive approvals', async () => {
+    await withImpl(async (impl, instance) => {
       const chatId = 1;
       impl.storage.chatMeta.put({id: chatId, title: 'Git task', execution: {mode: 'agent', environment: 'rhel10', git: {connectionId: 'owned', repository: 'team/project'}}, started: new Date(), lastActive: new Date()});
       impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
       impl.users.get = () => ({getExecutionLaunch: async (selection: {connectionId: string}) => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
-        git: {connectionId: selection.connectionId, providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
+        git: {connectionId: selection.connectionId, providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}}),
+        getGatekeeperClassFor: async (input: any) => ({class: impl.ctx.exports.AgentGitGatekeeper({props: {ownerId: OWNER_USER_ID, ...input.agentGit, identity: 'test'}})})});
       const bytes = concatBytes(await buildPackBytes(FIXTURE_OBJECTS.map(object => ({type: object.type, payload: b64Bytes(object.payload)}))));
       let pack = btoa(String.fromCharCode(...bytes));
       const calls: string[] = [];
@@ -134,16 +173,45 @@ describe('owner-authorized Linux workspace tools', () => {
       pack = btoa('not a Git pack');
       await expect(impl.agentGitOperation(chatId, {action: 'push', branch: 'fix/other', base: 'main'})).rejects.toThrow();
       expect(calls.filter(url => url.includes('/prepare-action'))).toHaveLength(1);
+      // A random boundary blob must really fit storage, not just the decoder's inflated limit.
+      const blob = new Uint8Array(1048576);
+      for (let offset = 0; offset < blob.length; offset += 65536) crypto.getRandomValues(blob.subarray(offset, offset + 65536));
+      const encode = (data: Uint8Array) => {
+        let binary = '';
+        for (let offset = 0; offset < data.length; offset += 32768) binary += String.fromCharCode(...data.subarray(offset, offset + 32768));
+        return btoa(binary);
+      };
+      pack = encode(concatBytes(await buildPackBytes([
+        ...FIXTURE_OBJECTS.map(object => ({type: object.type, payload: b64Bytes(object.payload)})), {type: 'blob', payload: blob},
+      ])));
+      expect((await impl.agentGitOperation(chatId, {action: 'push', branch: 'fix/boundary', base: 'main'})).state).toBe('pending');
+      pack = encode(concatBytes(await buildPackBytes([{type: 'blob', payload: new Uint8Array(1048577)}])));
+      await expect(impl.agentGitOperation(chatId, {action: 'push', branch: 'fix/oversized', base: 'main'})).rejects.toThrow();
+      expect(calls.filter(url => url.includes('/prepare-action'))).toHaveLength(2);
+      const retained = await impl.getGatekeeperFacet(record.gatekeeperId);
+      impl.ensureAmbientCapsules = async () => {};
+      impl.markOutputsDirty = () => {};
+      impl.users.get = () => ({whoami: async () => OWNER, getChatContext: async () => ({profile: OWNER}), listGatekeeperVendors: async () => []});
+      using notifyClosed = new NativeRpcStub<() => void>(() => {});
+      using client = await instance.open(OWNER_USER_ID, OWNER.id, notifyClosed);
+      await client.deleteChat(chatId);
+      expect(impl.storage.gitObjectMetadata.get(COMMIT_2)?.pendingPush ?? []).toEqual([]);
+      expect(impl.storage.gatekeepers.get(record.gatekeeperId)).toBeUndefined();
+      expect(impl.storage.actions.get(record.id).state).toBe('rejected');
+      try {await retained.status(result.id); throw new Error('Retained private pack');} catch (error) {expect((error as Error).message).toMatch(/Unknown|deleted|reset|broken/i);}
+
+
     });
   });
 
   it('queues enterprise Git writes as owner-scoped Gatekeeper actions and denies Ask, collaborators and sensitive pushes', async () => {
-    await withImpl(async impl => {
+    await withImpl(async (impl, instance) => {
       const chatId = 1;
       impl.storage.chatMeta.put({id: chatId, title: 'Git task', execution: {mode: 'agent', environment: 'rhel10', git: {connectionId: 'owned', repository: 'team/project'}}, started: new Date(), lastActive: new Date()});
       impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
       impl.users.get = () => ({getExecutionLaunch: async (selection: {connectionId: string}) => ({environment: 'rhel10', identity: {username: 'owner', uid: 12345, gid: 23456},
-        git: {connectionId: selection.connectionId, providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}})});
+        git: {connectionId: selection.connectionId, providerId: 'internal', repository: 'team/project', token: 'private-owner-token'}}),
+        getGatekeeperClassFor: async (input: any) => ({class: impl.ctx.exports.AgentGitGatekeeper({props: {ownerId: OWNER_USER_ID, ...input.agentGit, identity: 'test'}})})});
       const calls: any[] = [];
       impl.env = {...impl.env, AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
         AETHER_EXECUTION: {fetch: async (url: string, init: RequestInit) => {
@@ -183,6 +251,21 @@ describe('owner-authorized Linux workspace tools', () => {
       const newest = [...impl.storage.actions.list()].filter((action: any) => action.type === 'action').at(-1) as any;
       expect(newest.gatekeeperId).not.toBe(record.gatekeeperId);
       expect(impl.storage.gatekeepers.get(newest.gatekeeperId).creationSpec.connectionId).toBe('replacement');
+      const newestFacet = await impl.getGatekeeperFacet(newest.gatekeeperId);
+      impl.ensureAmbientCapsules = async () => {};
+      impl.markOutputsDirty = () => {};
+      impl.users.get = () => ({whoami: async () => OWNER, getChatContext: async () => ({profile: OWNER}), listGatekeeperVendors: async () => []});
+      using notifyClosed = new NativeRpcStub<() => void>(() => {});
+      using client = await instance.open(OWNER_USER_ID, OWNER.id, notifyClosed);
+      await client.deleteChat(chatId);
+      expect(impl.storage.gatekeepers.get(record.gatekeeperId)).toBeUndefined();
+      expect(impl.storage.gatekeepers.get(newest.gatekeeperId)).toBeUndefined();
+      expect(impl.storage.actions.get(newest.id).state).toBe('rejected');
+      expect(await impl.ctx.storage.get('aether.execution.gitgatekeeper.1')).toBeUndefined();
+      expect(await impl.ctx.storage.get('aether.execution.identity.1')).toBeUndefined();
+      expect(await impl.ctx.storage.get('aether.execution.enabled.1')).toBeUndefined();
+      try {await newestFacet.status(1); throw new Error('Retained private artifact');} catch (error) {expect((error as Error).message).toMatch(/Unknown|deleted|reset|broken/i);}
+
     });
   });
 
@@ -190,7 +273,7 @@ describe('owner-authorized Linux workspace tools', () => {
     await withImpl(async impl => {
       const chatId = 1;
       impl.storage.chatMeta.put({id: chatId, title: 'Linux task', execution: {mode: 'agent', environment: 'rhel10'}, started: new Date(), lastActive: new Date()});
-      impl.storage.chats.put({chatId, sequence: impl.nextChatSequence(chatId), timestamp: new Date(),
+      impl.storage.chats.put({chatId, sequence: impl.nextChatSequence(chatId), timestamp: impl.getChatTimestamp(),
         author: OWNER, type: 'message', message: 'Run the repository tests.'});
       const calls: any[] = [];
       impl.env = {...impl.env, AETHER_EXECUTION_ENABLED: 'true', AETHER_EXECUTION_TENANT: 'acme',
@@ -201,12 +284,14 @@ describe('owner-authorized Linux workspace tools', () => {
       impl.storage.activeAgents.put({chatId, initiatorUserId: OWNER_USER_ID, modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
       const offered = await runScriptedTurn(impl, chatId, [
         fauxAssistantMessage([fauxToolCall('workspace', {action: 'exec', command: 'npm test'})]),
+        fauxAssistantMessage([fauxToolCall('git_action', {action: 'push'})]),
         fauxAssistantMessage([fauxText('Done')]),
       ]);
       expect(offered[0]).toEqual(['git_action', 'workspace']);
       expect(calls.map(call => call.action)).toEqual(['start', 'exec']);
       expect(calls[0].identity).toEqual({username: 'owner', uid: 12345, gid: 23456});
       expect(toolCalls(impl, chatId).find(call => call.toolName === 'workspace')?.output).toContain('tests passed');
+      expect(toolCalls(impl, chatId).find(call => call.toolName === 'git_action')?.error).toContain('Task branch and base required');
       impl.storage.activeAgents.put({chatId, initiatorUserId: 'collaborator', modelId: 'faux-model', initiator: OWNER, callbackInitiated: false});
       expect(await impl.executionWorkspaceEnabled(chatId)).toBe(false);
       await expect(impl.agentWorkspaceOperation(chatId, {action: 'exec', command: 'denied'})).rejects.toThrow('Owner-started');
@@ -218,7 +303,7 @@ describe('owner-authorized Linux workspace tools', () => {
       metadata.execution = {mode: 'ask', environment: 'rhel10'};
       impl.storage.chatMeta.put(metadata);
       await impl.ctx.storage.put('aether.execution.enabled.1', true);
-      impl.storage.chats.put({chatId, sequence: impl.nextChatSequence(chatId), timestamp: new Date(), author: OWNER, type: 'message', message: 'Ask a follow-up'});
+      impl.storage.chats.put({chatId, sequence: impl.nextChatSequence(chatId), timestamp: impl.getChatTimestamp(), author: OWNER, type: 'message', message: 'Ask a follow-up'});
       const askTools = await runScriptedTurn(impl, chatId, [fauxAssistantMessage([fauxText('Hello')])]);
       expect(askTools[0]).not.toContain('workspace');
       expect(askTools[0]).toContain('executeCode');

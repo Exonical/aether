@@ -29,7 +29,7 @@ import type { UserAiModelRecord, WorkspaceOutputEntry } from "./storage-schema/u
 import {
   GitStore, commitIdentityForAuthor, filesEqual, threeWayMerge, type MergeResult,
 } from "./git-store";
-import { GitCacheImpl, WorkspaceGitCache } from "./git-cache";
+import { GitCacheImpl, WorkspaceGitCache, MAX_GIT_OBJECT_SIZE } from "./git-cache";
 import {
   OVERSEER_STORAGE_VERSION, migrateToActionIndexes, migrateToBlueprintUpstreams,
   migrateToGitStorage, migrateToMultiGadget, migrateToWorkpieceTypes,
@@ -2481,6 +2481,10 @@ class OverseerImpl implements AgentHooks {
   }
 
   async agentGitOperation(chatId: number, input: AgentGitOperation): Promise<AgentGitResult> {
+    return this.withGitPolicyLock(() => this.#agentGitOperation(chatId, input));
+  }
+
+  async #agentGitOperation(chatId: number, input: AgentGitOperation): Promise<AgentGitResult> {
     if (!this.ownerId || !await this.executionWorkspaceEnabled(chatId)) throw new Error('Owner-started Agent workspace required');
     const selection = this.storage.chatMeta.get(chatId)?.execution?.git;
     if (!selection) throw new Error('Select a Git repository first');
@@ -2494,7 +2498,7 @@ class OverseerImpl implements AgentHooks {
       gatekeeperId = this.allocateWorkpieceId();
       this.storage.gatekeepers.put({id: gatekeeperId, creationSpec: {type: 'agentGit', chatId, connectionId: selection.connectionId},
         resourceTitle: `Agent Git: ${selection.repository}`, resourceUrl: 'http://agent-git.local/',
-        class: this.ctx.exports.AgentGitGatekeeper({props: {ownerId: this.ownerId, workspace, selection, identity: executionLaunchKey(launch)}})});
+        class: (await this.ownerUserDo().getGatekeeperClassFor({agentGit: {workspace, selection}}, 'http://agent-git.local/')).class});
       await this.ctx.storage.put(key, gatekeeperId);
     }
     const gatekeeper = await this.getGatekeeperFacet(gatekeeperId) as Fetcher<AgentGitGatekeeper>;
@@ -2511,7 +2515,7 @@ class OverseerImpl implements AgentHooks {
       const bytes = Uint8Array.from(atob(snapshot.pack), char => char.charCodeAt(0));
       let total = 0, count = 0;
       for await (const object of decodePackStream(new ReadableStream({type: 'bytes', start(controller) {controller.enqueue(bytes); controller.close();}}),
-        {maxPackSize: 2097152, maxObjectSize: 2097152, resolveBase: oid => objects.get(oid)})) {
+        {maxPackSize: 2097152, maxObjectSize: MAX_GIT_OBJECT_SIZE, resolveBase: oid => objects.get(oid)})) {
         total += object.payload.length;
         if (total > 8388608 || ++count > 4096) throw new Error('Git snapshot too large');
         objects.set(object.oid, object);
@@ -4830,14 +4834,51 @@ class OverseerImpl implements AgentHooks {
   // gate was cleared: this is the single chokepoint where an action transitions to "approved", so
   // requiring them here guarantees the audit log always records the resolving user and whether it
   // was applied automatically. For an auto-approval, `resolvedBy` is the user who enabled the rule.
+  // Serialize publication with restricted observations, without blocking the DO input gate.
+  // A restricted observation cannot deliver its data until an earlier immutable push finishes;
+  // once it records the flag, every later push fails closed.
+  #gitPolicyTail: Promise<void> = Promise.resolve();
+  async withGitPolicyLock<T>(operation: () => Promise<T>): Promise<T> {
+    const previous = this.#gitPolicyTail;
+    let release!: () => void;
+    this.#gitPolicyTail = new Promise<void>(resolve => {release = resolve;});
+    await previous;
+    try {return await operation();} finally {release();}
+  }
+
   async applyPendingAction(record: ActionRecord & {type: "action"},
                            resolvedBy: AiChatAuthorInfo, autoApproved: boolean): Promise<void> {
+    if (record.description.pushedCommits?.length || this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec?.type === 'agentGit') {
+      return this.withGitPolicyLock(() => this.#applyPendingAction(record, resolvedBy, autoApproved));
+    }
+    return this.#applyPendingAction(record, resolvedBy, autoApproved);
+  }
+
+  async assertGitPublicationSettled(): Promise<void> {
+    const id = this.storage.gitPublicationActionId.get();
+    if (id === undefined) return;
+    if (this.storage.actions.get(id)?.state !== 'approved') {
+      throw new Error('Git publication outcome unresolved; retry the pending approval before observing restricted data or deleting its chat');
+    }
+    this.storage.gitPublicationActionId.put(undefined);
+  }
+
+  async #applyPendingAction(record: ActionRecord & {type: "action"},
+                            resolvedBy: AiChatAuthorInfo, autoApproved: boolean): Promise<void> {
     if (this.storage.containsRestrictedData.get() && record.description.pushedCommits?.length) throw new Error('Git pushes are blocked after observing sensitive data');
     if (autoApproved && this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec?.type === 'agentGit') throw new Error('Agent Git requires owner approval');
     let gatekeeper = await this.getGatekeeperFacet(record.gatekeeperId);
     // The apply-time cache stub is scoped to the gatekeeper AND to this action (approval can
     // happen long after the session that queued it, so the queue-time stub is gone) -- the
     // binding that makes buildPack() serve exactly this action's pending-push closure.
+    const publication = !!record.description.pushedCommits?.length;
+    if (publication) {
+      const unresolved = this.storage.gitPublicationActionId.get();
+      if (unresolved !== undefined && unresolved !== record.id) await this.assertGitPublicationSettled();
+      // Keep this marker on ambiguous failure: a controller may still be finishing a write.
+      // Retrying the same immutable action reconciles the remote outcome before releasing it.
+      this.storage.gitPublicationActionId.put(record.id);
+    }
     await gatekeeper.applyAction(record.action,
         new GitCacheImpl(this.gitCache, record.gatekeeperId, record.id));
     record.state = "approved";
@@ -4853,6 +4894,7 @@ class OverseerImpl implements AgentHooks {
       this.storage.actions.put(record);
     });
     // Also when a rule applies it: a user's "always approve" answers a pending request that way.
+    if (publication) this.storage.gitPublicationActionId.put(undefined);
     this.traceAgentActionApproval(record, "approved");
   }
 
@@ -4972,6 +5014,11 @@ class OverseerImpl implements AgentHooks {
   // no gadget's env retains a dangling entry. (This is distinct from merely unbinding it from one
   // gadget -- GadgetClient.unbind() -- which leaves the gatekeeper alive, possibly orphaned.)
   removeGatekeeper(id: number) {
+    const publicationId = this.storage.gitPublicationActionId.get();
+    const publication = publicationId === undefined ? undefined : this.storage.actions.get(publicationId);
+    if (publication?.gatekeeperId === id && publication.state !== 'approved') {
+      throw new Error('Resolve the pending Git publication before removing its connection');
+    }
     for (let gadget of Array.from(this.storage.gadgets.list())) {
       if (gadget.type !== "gadget") continue;  // worktrees have no binding edges
       let names = Object.entries(gadget.bindings)
@@ -5152,16 +5199,18 @@ class OverseerImpl implements AgentHooks {
 
     // Setting ownerInvitesOnly narrows access to direct owner grants (see
     // SharingManager.computeEffectiveRoles), so the first observation to set it snapshots who had
-    // access beforehand. The manager may need an RPC on first use; from the flag read below through
-    // the diff after the writes, nothing awaits.
+    // access beforehand. Resolve the manager before waiting for publication; snapshot roles
+    // afterwards so the baseline and ownerInvitesOnly write have no interleaving await.
     let sharing = description.ownerInvitesOnly && !this.storage.ownerInvitesOnly.get()
         ? await this.getSharingManager() : undefined;
+    if (description.containsRestrictedData) {
+      await this.withGitPolicyLock(async () => {
+        await this.assertGitPublicationSettled();
+        this.storage.containsRestrictedData.put(true);
+      });
+    }
     let baseline = sharing && !this.storage.ownerInvitesOnly.get()
         ? sharing.computeEffectiveRoles() : undefined;
-
-    if (description.containsRestrictedData) {
-      this.storage.containsRestrictedData.put(true);
-    }
     if (description.ownerInvitesOnly) {
       this.storage.ownerInvitesOnly.put(true);
     }
@@ -10990,6 +11039,7 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
     }
 
     if (this.impl.storage.gatekeepers.get(action.gatekeeperId)?.creationSpec?.type === 'agentGit' && !this.isOwner) throw new Error('Only the owner can control Agent Git actions');
+    if (this.impl.storage.gitPublicationActionId.get() === action.id) throw new Error('Retry the pending approval to resolve its Git publication before rejecting it');
     let gatekeeper = await this.impl.getGatekeeperFacet(action.gatekeeperId);
 
     // Resolve the rejecter's identity before notifying the gatekeeper, so a failed profile fetch
@@ -11555,6 +11605,29 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
 
   async deleteChat(chatId: number): Promise<void> {
     if (this.impl.env.AETHER_EXECUTION_ENABLED === 'true' && this.impl.storage.chatMeta.get(chatId)?.execution?.mode === 'agent') await this.executionWorkspace({action: 'suspend'}, chatId);
+    // Include facets from earlier account selections, not just the current mapping.
+    await this.impl.withGitPolicyLock(async () => {
+      await this.impl.assertGitPublicationSettled();
+      for (const record of Array.from(this.impl.storage.gatekeepers.list())) {
+        if (record.creationSpec?.type !== 'agentGit' || record.creationSpec.chatId !== chatId) continue;
+        const resolvedBy = await this.#getClientProfile();
+        const facet = await this.impl.getGatekeeperFacet(record.id) as Fetcher<AgentGitGatekeeper>;
+        await facet.retire();
+        for (const action of Array.from(this.impl.storage.actions.pendingByGatekeeper.get(record.id))) {
+          if (action.type !== 'action') continue;
+          this.impl.gitCache.clearPushMarks(action.id);
+          action.state = 'rejected';
+          action.appliedAt = new Date();
+          action.resolvedBy = resolvedBy;
+          this.impl.storage.actions.put(action);
+        }
+        this.impl.removeGatekeeper(record.id);
+      }
+      await this.impl.ctx.storage.delete([
+        `aether.execution.gitgatekeeper.${chatId}`, `aether.execution.identity.${chatId}`,
+        `aether.execution.enabled.${chatId}`,
+      ]);
+    });
     let startedAt = Date.now();
     let response = this.impl.storage.gadgetResponseDeliveries.undeliveredByChatId.get(chatId);
     if (response?.status === "waiting") {
