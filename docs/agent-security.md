@@ -85,7 +85,7 @@ reads. A write already accepted by a provider cannot be undone by disconnecting.
 Rejected actions delete their private pack. Pending actions expire after 24 hours;
 reject expired cards to release their slots. Each facet permits eight pending
 actions. Snapshots contain new objects since the local remote base anchor, with deltas
-disabled. They are limited to 2 MiB compressed, 8 MiB inflated, 2 MiB per object
+disabled. They are limited to 2 MiB compressed, 8 MiB inflated, 1 MiB per object
 and 4096 objects. The controller verifies the anchor on the actual base branch
 before importing sandbox bytes; base history lookup is bounded to 256 commits.
 An old base anchor may require fetching/rebasing before retrying. Larger changes
@@ -127,3 +127,17 @@ snapshots, changed-remote refusal, retries, fixed PR endpoints, revocation, the
 real-workerd Gatekeeper queue/provenance flow, owner-only tool access and policy
 rendering. Run the CI checks, then validate with your self-hosted Git service and
 actual Cilium/Kata/CSI deployment before enabling production writes.
+
+Restricted observations and Git publication share a workspace lock. An observation
+that marks data restricted waits for an earlier captured push to finish before
+returning data; once recorded, the flag refuses subsequent pushes. This also
+applies to other Gatekeeper pushes, without holding the Durable Object input gate.
+Agent Git capabilities use the user minting policy (`agent-git`, resource pattern
+`http://agent-git.local/*`), checked again at apply time. Deleting a chat retires
+all its Git facets, rejects pending audit entries, clears pending push marks and
+removes private artifacts and execution identity keys.
+
+A durable in-flight publication marker survives worker restarts. If a write has
+an unknown outcome, restricted observations and chat deletion fail closed until
+the owner retries that pending approval to reconcile the immutable remote write.
+The action cannot be rejected while its publication outcome remains unresolved.
