@@ -153,6 +153,8 @@ spec:
             - {name: AETHER_EXECUTION_PULL_POLICY, value: {{ .Values.execution.runnerImage.pullPolicy | quote }}}
             - {name: AETHER_EXECUTION_RUNTIME_CLASS, value: {{ .Values.execution.runtimeClassName | quote }}}
             - {name: AETHER_EXECUTION_STORAGE_CLASS, value: {{ .Values.execution.storageClassName | quote }}}
+            - {name: AETHER_EXECUTION_RETENTION_SECONDS, value: {{ .Values.execution.retentionSeconds | int | quote }}}
+            - {name: AETHER_EXECUTION_MAX_WORKSPACES, value: {{ .Values.execution.maxWorkspaces | int | quote }}}
             - {name: AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS, value: {{ .Values.execution.idleTimeoutSeconds | quote }}}
             - {name: AETHER_EXECUTION_IMAGE_PULL_SECRETS, value: {{ .Values.imagePullSecrets | toJson | quote }}}
             - {name: AETHER_EXECUTION_GIT_WRITES, value: {{ .Values.execution.git.allowWrites | quote }}}
@@ -181,7 +183,9 @@ spec:
             {{- end }}
           readinessProbe:
             exec:
-              command: [node, -e, "fetch('http://127.0.0.1:9005/healthz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+              command: [node, -e, "fetch('http://127.0.0.1:9005/readyz').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+            timeoutSeconds: 5
+            periodSeconds: 10
         {{- end }}
       volumes:
         {{- if .Values.execution.enabled }}

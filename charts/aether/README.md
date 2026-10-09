@@ -56,3 +56,5 @@ For GitLab Self-Managed or GitHub Enterprise Server OAuth, configure the approve
 Agent runner pods suspend after 30 idle minutes by default. `execution.idleTimeoutSeconds` accepts 0 (disabled) through 604800 (seven days). Starts and shell/file operations renew the deadline; status polling does not. PVCs survive suspension, and the next Agent turn resumes the workspace. The controller needs namespace-scoped pod list/patch permissions to reconcile activity across restarts.
 
 Agent Git writes are opt-in through `execution.git.allowWrites` and require owner Gatekeeper approval. See [Agent security](../../docs/agent-security.md) for scopes, DNS policy, reconnect requirements, and artifact limits.
+
+Validate a deployed cluster with the [on-prem acceptance procedure](../../docs/on-prem-acceptance.md). Workspace retention and capacity settings are documented in [Agent workspaces](../../docs/agent-workspaces.md).

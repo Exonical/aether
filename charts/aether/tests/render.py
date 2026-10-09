@@ -161,3 +161,20 @@ for domain in ['cluster..local', 'a' * 64 + '.local', '-cluster.local', 'cluster
     render({**execution_values, 'networkPolicy': {'clusterDomain': domain}}, valid=False)
 render({**execution_values, 'networkPolicy': {'clusterDomain': 'a' * 63 + '.internal'}})
 print('Cluster domain label boundary checks passed')
+
+
+for retention in [0, 86400, 31536000]:
+    docs = render({**execution_values, "execution": {**execution_values["execution"], "retentionSeconds": retention, "maxWorkspaces": 5}})
+    manager = next(c for c in state(docs)["spec"]["template"]["spec"]["containers"] if c["name"] == "execution-manager")
+    env = {e["name"]: e["value"] for e in manager["env"]}
+    assert env["AETHER_EXECUTION_RETENTION_SECONDS"] == str(retention)
+    assert env["AETHER_EXECUTION_MAX_WORKSPACES"] == "5"
+    role = next(d for d in docs if d["kind"] == "Role" and d["metadata"]["name"].endswith("execution"))
+    pvc = next(r for r in role["rules"] if "persistentvolumeclaims" in r["resources"])
+    assert "patch" in pvc["verbs"]
+    assert ("delete" in pvc["verbs"]) == (retention > 0)
+for key, values in [("retentionSeconds", [-1, 31536001, 1.5]), ("maxWorkspaces", [0, 10001, 1.5])]:
+    for value in values:
+        render({**execution_values, "execution": {**execution_values["execution"], key: value}}, valid=False)
+
+assert "9005/readyz" in manager["readinessProbe"]["exec"]["command"][-1]

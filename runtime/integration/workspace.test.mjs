@@ -10,6 +10,8 @@ import test from "node:test";
 import { setTimeout as delay } from "node:timers/promises";
 import { newHttpBatchRpcSession, newWebSocketRpcSession } from "capnweb";
 
+import { stopProcess } from "../test/process.mjs";
+
 const root = dirname(dirname(fileURLToPath(import.meta.url)));
 
 test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, DO restart and account isolation", { timeout: 60000 }, async () => {
@@ -25,13 +27,7 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
   let executionFixture;
   let output = "";
   let starts = 0;
-  async function stop() {
-    if (!child || child.exitCode !== null || child.signalCode !== null) return;
-    const exited = once(child, "exit");
-    child.kill("SIGTERM");
-    const timer = setTimeout(() => child.kill("SIGKILL"), 5000);
-    try { await exited; } finally { clearTimeout(timer); }
-  }
+  const stop = () => stopProcess(child);
   async function start() {
     output = "";
     child = spawn(process.execPath, [join(root, "run-workspace.mjs")], {
@@ -103,7 +99,7 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
     assert.equal((await rpc(api => api.authenticate(adminToken).whoami())).name, "Aether Admin");
     await rpc(api => api.authenticate(adminToken).setOwnDisplayName("Persistent Admin"));
     const vendors = await rpc(api => api.authenticate(adminToken).listAddableGatekeepers());
-    assert.deepEqual(vendors.map(vendor => vendor.id).sort(), ["context", "scheduler"]);
+    assert.deepEqual(vendors.map(vendor => vendor.id).toSorted(), ["context", "scheduler"]);
     await rpc(api => api.authenticate(adminToken).provisionAmbientAccount("context"));
     await rpc(api => api.authenticate(adminToken).provisionAmbientAccount("scheduler"));
     assert.deepEqual(await rpc(api => api.authenticate(adminToken).listAddableGatekeepers()), []);
@@ -160,6 +156,6 @@ test("real upstream workspace: assets, password accounts, Gatekeepers, KV, R2, D
       postgresAdapter.closeAllConnections();
       await new Promise(resolve => postgresAdapter.close(resolve));
     }
-    await rm(state, { recursive: true, force: true });
+    await rm(state, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 });

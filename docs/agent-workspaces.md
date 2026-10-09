@@ -158,9 +158,30 @@ activity. Set `execution.idleTimeoutSeconds` to `0` to disable automatic suspens
 or to an integer up to 604800 (seven days). The standalone controller uses
 `AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS` with the same default and range.
 
-The controller permits 32 retained 10 GiB PVCs per installation. Pods request
+The controller defaults to 32 retained 10 GiB PVCs per installation; configure
+`execution.maxWorkspaces` (1–10000) to change the retained-workspace quota. Pods request
 250m CPU/256 MiB and have limits of 2 CPU/2 GiB. Deleting an Agent chat or application
 workspace suspends its pods and retains PVCs for operator-controlled retirement.
+Set `execution.retentionSeconds` to a positive duration (up to one year) to opt into
+PVC deletion after suspension; the default `0` retains indefinitely. The controller
+records acknowledged suspension on the PVC, starts retention when the pod is first
+confirmed absent, checks every minute and on startup, and deletes
+only expired owned PVCs with no running or terminating pod. UID/version preconditions
+protect against stale deletion. Legacy PVCs without a retention marker are preserved.
+Starting/resuming clears the marker before provisioning, including when pod creation
+fails. A subsequent suspension starts a new window after teardown. If the controller
+crashes between pod deletion and recording suspension, the PVC is conservatively
+preserved for operator review. Deleting a PVC may
+permanently destroy files, depending on the StorageClass reclaim policy; configure
+backups before enabling retention. PVC deletion RBAC is granted only when enabled.
+The standalone equivalents are `AETHER_EXECUTION_RETENTION_SECONDS` and
+`AETHER_EXECUTION_MAX_WORKSPACES`.
+
+On start/resume, terminal Failed/Succeeded pods are replaced on the same PVC. Pods
+still terminating are awaited for up to 60 seconds; cluster/node/CSI faults require
+operator repair. Start refuses a PVC already being deleted. No forced volume detach
+or automatic deletion of Pending pods is performed.
+
 Before upgrading from workspace-wide Linux sessions, suspend/delete their old
 runner pods. Their retained PVCs are not adopted by the per-chat identity scheme.
 
@@ -170,7 +191,7 @@ the shell's process group are killed at exit. Text operations are limited to
 that isolated container. Dispatched commands can finish after stop/logout or
 membership changes; existing background-agent lifetime rules still apply. There
 is no per-command approval or filesystem rollback. Interactive terminals, Windows,
-Repository/branch discovery, GitHub App installation permissions, larger incremental Git artifacts, and automatic PVC cleanup remain future work. Owner-approved push/MR publication is covered in [Agent security](agent-security.md).
+Repository/branch discovery, GitHub App installation permissions, larger incremental Git artifacts remain future work. Owner-approved push/MR publication is covered in [Agent security](agent-security.md).
 
 ## Validation
 
@@ -189,3 +210,7 @@ synthetic controller fixtures do not validate a live Kata cluster.
 ## Approved enterprise Git writes
 
 Agents may change local branches and commit. External pushes and PRs use Gatekeeper approval rather than sandbox credentials; see [Agent security](agent-security.md). `execution.egress` must remain empty, and sandbox DNS is limited to its private Git broker.
+
+For actual cluster validation, use the [on-prem acceptance procedure](on-prem-acceptance.md).
+
+For controller health, diagnostics and audit events, see [execution operations](execution-operations.md).

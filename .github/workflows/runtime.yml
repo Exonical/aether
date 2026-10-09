@@ -33,7 +33,7 @@ jobs:
           $env:PATH = "$blockedBin;$env:PATH"
           node runtime/build-workspace.mjs
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          node --test runtime/integration/workspace.test.mjs
+          node --test runtime/test/process.test.mjs runtime/integration/workspace.test.mjs
   helm:
     runs-on: ubuntu-24.04
     steps:
@@ -57,6 +57,7 @@ jobs:
       - run: npm ci --prefix runtime
       - run: npm test --prefix runtime
       - run: node --test runtime/execution/test/*.test.mjs
+      - run: node --test runtime/validation/*.test.mjs
       - run: npm test --prefix runtime/models
       - name: Render Kubernetes manifests
         run: |
