@@ -5,6 +5,35 @@ on:
 permissions:
   contents: read
 jobs:
+  windows-workspace:
+    runs-on: windows-2025
+    defaults:
+      run:
+        shell: pwsh
+        working-directory: aether workspace
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          path: aether workspace
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '26.7.0'
+      - run: npm install --global pnpm@12.10.1
+      - name: Install fork dependencies through pnpm's Node launcher
+        run: |
+          $pnpmLauncher = Join-Path (npm root --global) 'pnpm/bin/pnpm.mjs'
+          node $pnpmLauncher --dir cloudflare-os install --frozen-lockfile --pm-on-fail=ignore
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm ci --prefix runtime
+      - name: Build and run the workspace without a working pnpm shell shim
+        run: |
+          $blockedBin = Join-Path $env:RUNNER_TEMP 'blocked-pnpm'
+          New-Item -ItemType Directory -Force $blockedBin | Out-Null
+          Set-Content -Path (Join-Path $blockedBin 'pnpm.cmd') -Value "@echo off`r`nexit /b 99" -Encoding ascii
+          $env:PATH = "$blockedBin;$env:PATH"
+          node runtime/build-workspace.mjs
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          node --test runtime/integration/workspace.test.mjs
   helm:
     runs-on: ubuntu-24.04
     steps:
