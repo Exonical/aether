@@ -164,10 +164,14 @@ The controller defaults to 32 retained 10 GiB PVCs per installation; configure
 workspace suspends its pods and retains PVCs for operator-controlled retirement.
 Set `execution.retentionSeconds` to a positive duration (up to one year) to opt into
 PVC deletion after suspension; the default `0` retains indefinitely. The controller
-records suspension time on the PVC, checks every minute and on startup, and deletes
+records acknowledged suspension on the PVC, starts retention when the pod is first
+confirmed absent, checks every minute and on startup, and deletes
 only expired owned PVCs with no running or terminating pod. UID/version preconditions
 protect against stale deletion. Legacy PVCs without a retention marker are preserved.
-Resuming resets the retention deadline on the next suspension. Deleting a PVC may
+Starting/resuming clears the marker before provisioning, including when pod creation
+fails. A subsequent suspension starts a new window after teardown. If the controller
+crashes between pod deletion and recording suspension, the PVC is conservatively
+preserved for operator review. Deleting a PVC may
 permanently destroy files, depending on the StorageClass reclaim policy; configure
 backups before enabling retention. PVC deletion RBAC is granted only when enabled.
 The standalone equivalents are `AETHER_EXECUTION_RETENTION_SECONDS` and

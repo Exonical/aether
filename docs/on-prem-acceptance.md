@@ -58,7 +58,9 @@ Keep evidence free of tokens, cookies, OAuth codes and Secret contents.
 | Retention/quota | On disposable workspaces only, enable a short `retentionSeconds` and small `maxWorkspaces`. Suspend and wait; only expired PVCs with no pod are deleted. A resumed workspace is preserved. Allocation beyond the retained-PVC quota is refused. Verify the StorageClass reclaim policy and actual backing-volume disposal. |
 | Controller restart | Restart the validation application through your normal rollout procedure. Persisted idle/retention deadlines must survive, and retained files must resume. Git leases are in memory: a fresh authenticated start is required after restart. |
 
-The idle/retention controller examines resources every minute. Workspaces with running
+The idle/retention controller examines resources every minute. Retention begins when
+a successfully suspended pod is first confirmed absent, so slow teardown does not consume
+the recovery window. Starting/resuming clears any previous marker before pod creation. Workspaces with running
 pods, including pods still terminating, are never eligible for PVC cleanup. Legacy PVCs
 without a retention marker are preserved for explicit operator review. Setting retention
 to zero disables deletion. Backups/snapshots and the storage provider reclaim policy are

@@ -13,7 +13,8 @@ export function validateSnapshot({statefulset, route, policy, runtimeClass, gate
   const manager = containers.find(c => c.name === 'execution-manager');
   const workerd = containers.find(c => c.name === 'workerd');
   check('single application replica ready at current generation', statefulset.spec?.replicas === 1
-    && statefulset.status?.readyReplicas === 1 && statefulset.status?.observedGeneration === statefulset.metadata?.generation);
+    && statefulset.status?.readyReplicas === 1 && statefulset.status?.updatedReplicas === 1
+    && Boolean(statefulset.status?.updateRevision) && statefulset.status?.currentRevision === statefulset.status?.updateRevision && statefulset.status?.observedGeneration === statefulset.metadata?.generation);
   for (const name of ['workerd', 'oidc-adapter', 'postgres-adapter', 's3-adapter', 'models-adapter', 'execution-manager']) {
     check(`${name} container configured`, containers.some(c => c.name === name));
   }

@@ -10,7 +10,7 @@ const noop = () => {};
 function fixture({idleTimeoutSeconds = 30, retentionSeconds = 0} = {}) {
   let clock = Date.parse('2026-10-08T00:00:00Z'), revision = 0, proxy = successfulProxy;
   const resources = new Map(), calls = [], revoked = [];
-  let pageSnapshot = [], failDelete = false, deleted = noop, finishDeletion = false;
+  let pageSnapshot = [], failDelete = false, deleted = noop, finishDeletion = false, holdDeletion = false, failCreation = false;
   const api = async (method, path, body, options) => {
     calls.push({method, path, body, options});
     if (path.includes('/proxy/')) return proxy();
@@ -33,6 +33,7 @@ function fixture({idleTimeoutSeconds = 30, retentionSeconds = 0} = {}) {
       return object ? {status: 200, body: structuredClone(object)} : {status: 404, body: {}};
     }
     if (method === 'POST') {
+      if (body.kind === 'Pod' && failCreation) {failCreation = false; return {status: 500, body: {}};}
       const object = structuredClone(body);
       object.metadata = {...object.metadata, uid: `uid-${++revision}`, resourceVersion: String(revision), creationTimestamp: new Date(clock).toISOString()};
       object.status = {conditions: [{type: 'Ready', status: 'True'}]};
@@ -43,7 +44,12 @@ function fixture({idleTimeoutSeconds = 30, retentionSeconds = 0} = {}) {
     if (method === 'PATCH') {
       assert.equal(options.contentType, 'application/json-patch+json');
       assert.equal(body[0].value, object.metadata.uid);
-      object.metadata.annotations[body[1].path.split('/').at(-1).replaceAll('~1', '/')] = body[1].value;
+      for (const patch of body.slice(1)) {
+        if (patch.op === 'test') {assert.equal(patch.value, object.metadata.resourceVersion); continue;}
+        const key = patch.path.split('/').at(-1).replaceAll('~1', '/');
+        if (patch.op === 'remove') delete object.metadata.annotations[key];
+        else object.metadata.annotations[key] = patch.value;
+      }
       object.metadata.resourceVersion = String(++revision);
       return {status: 200, body: structuredClone(object)};
     }
@@ -55,24 +61,27 @@ function fixture({idleTimeoutSeconds = 30, retentionSeconds = 0} = {}) {
       }
       assert.equal(body.preconditions.uid, object.metadata.uid);
       if (body.preconditions.resourceVersion !== undefined) assert.equal(body.preconditions.resourceVersion, object.metadata.resourceVersion);
-      resources.delete(path); deleted(); return {status: 200, body: {}};
+      if (holdDeletion && object.kind === 'Pod') object.metadata.deletionTimestamp = new Date(clock).toISOString();
+      else resources.delete(path);
+      deleted(); return {status: 200, body: {}};
     }
     throw new Error('Unexpected API request');
   };
   const create = ({idleCheckIntervalMs, log = noop, gitBroker = {revokeWorkspace: workspace => revoked.push(workspace)}} = {}) => createManager({api, tenant: 'acme', namespace: 'aether', image: 'fixture', idleTimeoutSeconds, retentionSeconds, idleCheckIntervalMs,
     now: () => clock, gitBroker, log});
   return {resources, calls, revoked, create, advance: ms => {clock += ms;}, setProxy: handler => {proxy = handler;},
+    holdDeletion: () => {holdDeletion = true;}, failNextCreation: () => {failCreation = true;},
     failNextDelete: () => {failDelete = true;}, onDelete: handler => {deleted = handler;},
     finishDeletingPod: () => {finishDeletion = true;}};
 }
 
 async function client(server) {
   await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
-  return async (action, workspace = id, git) => {
+  return async (action, workspace = id, git, expectedStatus = 200) => {
     const response = await fetch(`http://127.0.0.1:${server.address().port}/v1/workspaces/${workspace}`, {method: 'POST',
       headers: {'content-type': 'application/json', 'x-aether-tenant': 'acme'},
       body: JSON.stringify({action, ...(action === 'start' ? {environment: 'rhel10', identity: {username: 'bryce', uid: 12345, gid: 23456}, ...(git ? {git} : {})} : {})})});
-    assert.equal(response.status, 200);
+    assert.equal(response.status, expectedStatus);
     return response.json();
   };
 }
@@ -301,5 +310,47 @@ test('lifecycle events and bounded status reasons omit raw Kubernetes messages',
     await operation('suspend'); f.advance(60000); await server.cleanupRetainedWorkspaces();
     assert.deepEqual(events.map(e => e.event), ['workspace.started', 'workspace.suspended', 'workspace.retired']);
     assert.doesNotMatch(JSON.stringify(events), /do-not-log/);
+  } finally {await close(server);}
+});
+
+
+test('resume clears expired retention before pod loss or a failed creation, including controller restart', async () => {
+  const f = fixture({retentionSeconds: 60}), server = f.create(), operation = await client(server);
+  try {
+    await operation('start'); await operation('suspend'); f.advance(59000);
+    await operation('start');
+    const pvc = [...f.resources.values()].find(x => x.kind === 'PersistentVolumeClaim');
+    assert.equal(pvc.metadata.annotations['aether.dev/retained-since'], undefined);
+    const podPath = `/api/v1/namespaces/aether/pods/${pvc.metadata.name}`;
+    f.resources.delete(podPath); f.advance(61000);
+    assert.deepEqual(await f.create().cleanupRetainedWorkspaces(), {deleted: 0, failed: 0});
+    await operation('start'); await operation('suspend'); f.advance(61000);
+    f.failNextCreation();
+    await operation('start', id, undefined, 409);
+    assert.equal(pvc.metadata.annotations['aether.dev/retained-since'], undefined);
+    assert.deepEqual(await f.create().cleanupRetainedWorkspaces(), {deleted: 0, failed: 0});
+    assert.equal(f.resources.size, 1);
+  } finally {await close(server);}
+});
+
+test('retention starts after slow pod deletion and survives restart; refused deletion cannot arm cleanup', async () => {
+  const f = fixture({retentionSeconds: 60}), server = f.create(), operation = await client(server);
+  try {
+    await operation('start'); f.failNextDelete();
+    await operation('suspend', id, undefined, 409);
+    const pvc = [...f.resources.values()].find(x => x.kind === 'PersistentVolumeClaim');
+    assert.equal(pvc.metadata.annotations['aether.dev/retained-since'], undefined);
+    f.holdDeletion(); await operation('suspend');
+    assert.equal(pvc.metadata.annotations['aether.dev/retained-since'], 'pending');
+    f.advance(120000);
+    assert.deepEqual(await f.create().cleanupRetainedWorkspaces(), {deleted: 0, failed: 0});
+    f.resources.delete(`/api/v1/namespaces/aether/pods/${pvc.metadata.name}`);
+    const restarted = f.create();
+    assert.deepEqual(await restarted.cleanupRetainedWorkspaces(), {deleted: 0, failed: 0});
+    assert.match(pvc.metadata.annotations['aether.dev/retained-since'], /^\d+$/);
+    f.advance(59000);
+    assert.deepEqual(await restarted.cleanupRetainedWorkspaces(), {deleted: 0, failed: 0});
+    f.advance(1000);
+    assert.deepEqual(await restarted.cleanupRetainedWorkspaces(), {deleted: 1, failed: 0});
   } finally {await close(server);}
 });

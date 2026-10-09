@@ -10,7 +10,7 @@ function fixture() {
   return {
     statefulset: {metadata: {generation: 2}, spec: {replicas: 1, template: {spec: {containers:
       ['workerd', 'oidc-adapter', 'postgres-adapter', 's3-adapter', 'models-adapter', 'execution-manager'].map(containerName =>
-        ({name: containerName, env: Object.entries(variables).map(([name, value]) => ({name, value}))}))}}}, status: {readyReplicas: 1, observedGeneration: 2}},
+        ({name: containerName, env: Object.entries(variables).map(([name, value]) => ({name, value}))}))}}}, status: {readyReplicas: 1, updatedReplicas: 1, currentRevision: 'revision-2', updateRevision: 'revision-2', observedGeneration: 2}},
     runtimeClass: {metadata: {name: 'kata'}, handler: 'kata-qemu'},
     policy: {spec: {endpointSelector: {matchLabels: {'aether.dev/execution': 'acme'}}, ingress: [{}], egress: [{}]}},
     route: {metadata: {namespace: 'app', generation: 2}, spec: {parentRefs: [{name: 'shared', namespace: 'gateways', sectionName: 'https'}]},
@@ -27,6 +27,9 @@ test('preflight distinguishes ready deployment from live acceptance', () => {
 test('preflight refuses stale status, missing adapters and wrong runtime, tenant or Gateway', () => {
   for (const change of [
     s => {s.statefulset.status.observedGeneration = 1;},
+    s => {s.statefulset.status.updatedReplicas = 0;},
+    s => {s.statefulset.status.currentRevision = 'revision-1';},
+    s => {delete s.statefulset.status.updateRevision;},
     s => {s.statefulset.spec.template.spec.containers.splice(1, 1);},
     s => {s.runtimeClass.handler = 'runc';},
     s => {s.policy.spec.endpointSelector.matchLabels['aether.dev/execution'] = 'other';},

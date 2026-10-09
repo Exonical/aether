@@ -93,19 +93,26 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
       {op: 'add', path: '/metadata/annotations/aether.dev~1last-activity', value: String(now())},
     ], {contentType: 'application/json-patch+json'});
   };
+  const retentionAnnotation = 'aether.dev/retained-since';
+  const setRetention = async (pvc, value) => {
+    if (value === undefined && !Object.hasOwn(pvc.metadata.annotations ?? {}, retentionAnnotation)) return pvc;
+    return call('PATCH', `${base}/persistentvolumeclaims/${pvc.metadata.name}`, [
+      {op: 'test', path: '/metadata/uid', value: pvc.metadata.uid},
+      {op: 'test', path: '/metadata/resourceVersion', value: pvc.metadata.resourceVersion},
+      {op: value === undefined ? 'remove' : 'add', path: '/metadata/annotations/aether.dev~1retained-since',
+        ...(value === undefined ? {} : {value})},
+    ], {contentType: 'application/json-patch+json'});
+  };
   const suspend = async (id, pod, idle = false) => {
     if (!idle) gitBroker.revokeWorkspace(id);
-    if (pod && retentionSeconds) {
-      const pvc = await call('GET', `${base}/persistentvolumeclaims/${pod.metadata.name}`);
-      owned(pvc, id);
-      await call('PATCH', `${base}/persistentvolumeclaims/${pod.metadata.name}`, [
-        {op: 'test', path: '/metadata/uid', value: pvc.metadata.uid},
-        {op: 'add', path: '/metadata/annotations/aether.dev~1retained-since', value: String(now())},
-      ], {contentType: 'application/json-patch+json'});
-    }
     if (pod) await call('DELETE', `${base}/pods/${pod.metadata.name}`, {apiVersion: 'v1', kind: 'DeleteOptions',
       preconditions: {uid: pod.metadata.uid, ...(idle ? {resourceVersion: pod.metadata.resourceVersion} : {})}});
     if (idle) gitBroker.revokeWorkspace(id);
+    if (pod && retentionSeconds) {
+      const pvc = owned(await call('GET', `${base}/persistentvolumeclaims/${pod.metadata.name}`), id);
+      // Acknowledged deletion can take arbitrarily long. Start the clock only after absence.
+      await setRetention(pvc, await getPod(pod.metadata.name, id) ? 'pending' : String(now()));
+    }
     if (pod) {counters.suspended++; emit('workspace.suspended', {workspace: id, idle});}
   };
   let reconciling = false;
@@ -160,11 +167,12 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
             if (current.status === 404) continue;
             if (current.status !== 200) replyError();
             const pvc = owned(current.body, id);
-            const stamp = pvc.metadata.annotations?.['aether.dev/retained-since'];
-            const retained = /^\d+$/.test(stamp ?? '') ? Number(stamp) : NaN;
+            const stamp = pvc.metadata.annotations?.[retentionAnnotation];
             // Legacy PVCs and still-running/terminating pods are never eligible.
-            if (pvc.metadata.deletionTimestamp || !Number.isSafeInteger(retained)
-                || now() - retained < retentionSeconds * 1000 || await getPod(name, id)) continue;
+            if (pvc.metadata.deletionTimestamp || await getPod(name, id)) continue;
+            if (stamp === 'pending') {await setRetention(pvc, String(now())); continue;}
+            const retained = /^\d+$/.test(stamp ?? '') ? Number(stamp) : NaN;
+            if (!Number.isSafeInteger(retained) || now() - retained < retentionSeconds * 1000) continue;
             gitBroker.revokeWorkspace(id);
             await call('DELETE', `${base}/persistentvolumeclaims/${name}`, {apiVersion: 'v1', kind: 'DeleteOptions',
               preconditions: {uid: pvc.metadata.uid, resourceVersion: pvc.metadata.resourceVersion}});
@@ -201,7 +209,11 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
       if (pvc.body.metadata.deletionTimestamp) failOperation('STORAGE_RETIRING');
       if (pvc.body.metadata.annotations?.['aether.dev/identity'] !== fingerprint
           || (pod && pod.metadata.annotations?.['aether.dev/identity'] !== fingerprint)) failOperation('IDENTITY_CHANGED');
+      // Clear even if retention was disabled since suspension; failed starts stay conservative.
+      pvc.body = await setRetention(pvc.body, undefined);
+      let recovering = false;
       if (pod && ['Failed', 'Succeeded'].includes(pod.status?.phase) && !pod.metadata.deletionTimestamp) {
+        recovering = true;
         await suspend(id, pod);
         pod = await getPod(name, id);
       }
@@ -213,6 +225,7 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
         if (pod && pod.metadata.annotations?.['aether.dev/identity'] !== fingerprint) replyError();
         if (pod?.metadata.deletionTimestamp && Date.now() >= deletionDeadline) failOperation('WORKSPACE_STOPPING');
       }
+      if (recovering) await setRetention(owned(await call('GET', `${base}/persistentvolumeclaims/${name}`), id), undefined);
       const remote = body.git ? gitBroker.lease(id, body.git) : null;
       if (!body.git) gitBroker.revokeWorkspace(id);
       let created = false;
