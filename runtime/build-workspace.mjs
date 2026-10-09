@@ -59,8 +59,24 @@ try {
   for (const config of configs) {
     const cwd = join(upstream, "packages", config.name);
     const outdir = join(scratch, config.name);
+    // Run prerequisites without a shell: Wrangler's custom pnpm commands fail with Windows shims.
+    const expectedBuild = config.name === "router" ? undefined
+      : config.name === "workshop-backend" ? "pnpm run build:worker"
+      : "pnpm exec capnweb-validate build --out .wrangler/validate";
+    if (config.build?.command !== expectedBuild) throw new Error(`Unsupported ${config.name} build command: ${config.build?.command}`);
+    if (expectedBuild) {
+      if (config.name === "workshop-backend") runNode(join(cwd, "scripts/build-browser-runtime.ts"), [], cwd);
+      runBin("capnweb-validate", ["build", "--out", ".wrangler/validate"], cwd);
+    }
+    // Keep prepared configs in scratch; explicit paths preserve the original package resolution.
+    const { build: _build, ...bundleConfig } = config;
+    bundleConfig.main = resolve(cwd, config.main);
+    if (config.assets) bundleConfig.assets = {...config.assets, directory: resolve(cwd, config.assets.directory)};
+    const bundleConfigPath = join(scratch, `${config.name}.wrangler.json`);
+    await writeFile(bundleConfigPath, JSON.stringify(bundleConfig), {flag: "wx"});
+    // The explicit script keeps Wrangler's project root at cwd rather than the scratch config.
     // Wrangler is a bundler here only; it neither serves nor deploys this workspace.
-    runBin("wrangler", ["deploy", "--dry-run", "--outdir", outdir], cwd);
+    runBin("wrangler", ["deploy", bundleConfig.main, "--dry-run", "--config", bundleConfigPath, "--outdir", outdir], cwd);
     const { mainModule, modules } = collectModules(outdir);
     const fields = { esm: "esModule", text: "text", wasm: "wasm", data: "data" };
     workers.push({ config, modules: modules.toSorted((a, b) => (a.name === mainModule ? -1 : b.name === mainModule ? 1 : 0)).map(module => ({

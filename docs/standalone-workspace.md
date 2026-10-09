@@ -17,7 +17,7 @@ npm run workspace:start --prefix runtime
 
 Open **http://localhost:8080**. Create the `admin` account before making the service accessible to anyone else. The launcher binds only to localhost. `AETHER_ADMINS` is a JSON array of upstream password usernames; the local default is `["admin"]`. A configured name does not create an account or reserve it. After your initial accounts exist, use `/admin` to close signups.
 
-The main frontend, Context UI and Scheduler UI are built by their real compilers, without Vite+ task IPC or development watchers. Wrangler runs only `deploy --dry-run` to bundle validated Worker code and text/Wasm/data modules. All compiler subprocesses receive `WRANGLER_SEND_METRICS=false`, `WRANGLER_SEND_ERROR_REPORTS=false` and `DO_NOT_TRACK=1`. No deployment, account login, managed storage provisioning, or runtime package download is performed.
+The main frontend, Context UI and Scheduler UI are built by their real compilers, without Vite+ task IPC or development watchers. Browser runtime generation and RPC validation also run directly through Node, so building does not depend on a working Windows `pnpm.cmd` shim. Wrangler runs only `deploy --dry-run` against a temporary configuration with the already-completed custom build removed, to bundle validated Worker code and text/Wasm/data modules. The original deployment configurations are preserved. All compiler subprocesses receive `WRANGLER_SEND_METRICS=false`, `WRANGLER_SEND_ERROR_REPORTS=false` and `DO_NOT_TRACK=1`. No deployment, account login, managed storage provisioning, or runtime package download is performed.
 
 Build dependencies must already be installed. The build pipeline is not an offline package installer; mirror the locked npm/pnpm inputs for a disconnected build.
 
