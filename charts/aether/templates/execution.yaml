@@ -35,7 +35,7 @@ rules:
     verbs: [create]
   - apiGroups: ['']
     resources: [persistentvolumeclaims]
-    verbs: [get, list, create]
+    verbs: [get, list, create, patch{{ if gt (int .Values.execution.retentionSeconds) 0 }}, delete{{ end }}]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding

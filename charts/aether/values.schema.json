@@ -776,6 +776,16 @@
               "type": "boolean"
             }
           }
+        },
+        "retentionSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 31536000
+        },
+        "maxWorkspaces": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 10000
         }
       }
     }

@@ -31,10 +31,12 @@ export function kubernetesClient({baseUrl, credentials}) {
   };
 }
 
-export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', imagePullPolicy = 'IfNotPresent', maxWorkspaces = 32, imagePullSecrets = [], gitBroker = createGitBroker({}), idleTimeoutSeconds = 1800, idleCheckIntervalMs = 60000, now = Date.now}) {
+export function createManager({api, tenant, namespace, image, storageClass, runtimeClass = 'kata', imagePullPolicy = 'IfNotPresent', maxWorkspaces = 32, imagePullSecrets = [], gitBroker = createGitBroker({}), idleTimeoutSeconds = 1800, retentionSeconds = 0, idleCheckIntervalMs = 60000, now = Date.now}) {
   if (!/^[a-z0-9][a-z0-9-]{0,62}$/.test(tenant) || !/^[a-z0-9][a-z0-9-]{0,62}$/.test(namespace) || !image || !runtimeClass || !['Always', 'IfNotPresent', 'Never'].includes(imagePullPolicy)) throw new Error('Invalid execution configuration');
   if (!Number.isInteger(idleTimeoutSeconds) || idleTimeoutSeconds < 0 || idleTimeoutSeconds > 604800
       || !Number.isInteger(idleCheckIntervalMs) || idleCheckIntervalMs < 1) throw new Error('Invalid idle suspension configuration');
+  if (!Number.isInteger(retentionSeconds) || retentionSeconds < 0 || retentionSeconds > 31536000
+      || !Number.isInteger(maxWorkspaces) || maxWorkspaces < 1 || maxWorkspaces > 10000) throw new Error('Invalid workspace retention or quota');
   const base = `/api/v1/namespaces/${namespace}`;
   const locks = new Set();
   let provisioning = false;
@@ -60,8 +62,8 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
     return owned(result.body, id);
   };
   const status = pod => ({state: !pod ? 'suspended' : pod.metadata.deletionTimestamp ? 'stopping'
-    : pod.status?.conditions?.some(c => c.type === 'Ready' && c.status === 'True') ? 'ready'
-    : pod.status?.phase === 'Failed' ? 'failed' : 'starting'});
+    : ['Failed', 'Succeeded'].includes(pod.status?.phase) ? 'failed'
+    : pod.status?.conditions?.some(c => c.type === 'Ready' && c.status === 'True') ? 'ready' : 'starting'});
   const activityAnnotation = 'aether.dev/last-activity';
   const touch = async pod => {
     if (!idleTimeoutSeconds || pod.metadata.deletionTimestamp) return;
@@ -73,6 +75,14 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
   };
   const suspend = async (id, pod, idle = false) => {
     if (!idle) gitBroker.revokeWorkspace(id);
+    if (pod && retentionSeconds) {
+      const pvc = await call('GET', `${base}/persistentvolumeclaims/${pod.metadata.name}`);
+      owned(pvc, id);
+      await call('PATCH', `${base}/persistentvolumeclaims/${pod.metadata.name}`, [
+        {op: 'test', path: '/metadata/uid', value: pvc.metadata.uid},
+        {op: 'add', path: '/metadata/annotations/aether.dev~1retained-since', value: String(now())},
+      ], {contentType: 'application/json-patch+json'});
+    }
     if (pod) await call('DELETE', `${base}/pods/${pod.metadata.name}`, {apiVersion: 'v1', kind: 'DeleteOptions',
       preconditions: {uid: pod.metadata.uid, ...(idle ? {resourceVersion: pod.metadata.resourceVersion} : {})}});
     if (idle) gitBroker.revokeWorkspace(id);
@@ -109,6 +119,43 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
       return result;
     } finally {reconciling = false;}
   };
+  let cleaning = false;
+  const cleanupRetainedWorkspaces = async () => {
+    const result = {deleted: 0, failed: 0};
+    if (!retentionSeconds || cleaning) return result;
+    cleaning = true;
+    try {
+      let continuation = '';
+      do {
+        const page = await call('GET', `${base}/persistentvolumeclaims?labelSelector=${encodeURIComponent(`aether.dev/execution=${tenant}`)}&limit=100${continuation ? `&continue=${encodeURIComponent(continuation)}` : ''}`);
+        for (const candidate of page.items) {
+          const id = candidate.metadata?.annotations?.['aether.dev/workspace'];
+          if (!/^[a-f0-9]{64}$/.test(id ?? '') || candidate.metadata.name !== identity(id).name
+              || candidate.metadata.labels?.['aether.dev/execution'] !== tenant || locks.has(id) || locks.size >= 8) continue;
+          locks.add(id);
+          try {
+            const name = candidate.metadata.name;
+            const current = await api('GET', `${base}/persistentvolumeclaims/${name}`);
+            if (current.status === 404) continue;
+            if (current.status !== 200) replyError();
+            const pvc = owned(current.body, id);
+            const stamp = pvc.metadata.annotations?.['aether.dev/retained-since'];
+            const retained = /^\d+$/.test(stamp ?? '') ? Number(stamp) : NaN;
+            // Legacy PVCs and still-running/terminating pods are never eligible.
+            if (pvc.metadata.deletionTimestamp || !Number.isSafeInteger(retained)
+                || now() - retained < retentionSeconds * 1000 || await getPod(name, id)) continue;
+            gitBroker.revokeWorkspace(id);
+            await call('DELETE', `${base}/persistentvolumeclaims/${name}`, {apiVersion: 'v1', kind: 'DeleteOptions',
+              preconditions: {uid: pvc.metadata.uid, resourceVersion: pvc.metadata.resourceVersion}});
+            result.deleted++;
+          } catch {result.failed++;}
+          finally {locks.delete(id);}
+        }
+        continuation = page.metadata?.continue ?? '';
+      } while (continuation);
+      return result;
+    } finally {cleaning = false;}
+  };
   const operation = async (id, body) => {
     const {name, metadata} = identity(id);
     let pod = await getPod(name, id);
@@ -120,8 +167,6 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
           || !Number.isInteger(user.gid) || user.gid <= 0 || user.gid > 2147483647) throw new Error('Verified identity required');
       const fingerprint = JSON.stringify([user.username, user.uid, user.gid, 'rhel10', body.git?.providerId ?? null, body.git?.repository ?? null]);
       metadata.annotations['aether.dev/identity'] = fingerprint;
-      const remote = body.git ? gitBroker.lease(id, body.git) : null;
-      if (!body.git) gitBroker.revokeWorkspace(id);
       // PVCs are retained across suspension; count them to prevent unbounded storage allocation.
       let pvc = await api('GET', `${base}/persistentvolumeclaims/${name}`);
       if (pvc.status === 404) {
@@ -132,8 +177,13 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
       }
       if (![200, 201].includes(pvc.status)) replyError();
       owned(pvc.body, id);
+      if (pvc.body.metadata.deletionTimestamp) throw new Error('Workspace storage is retiring');
       if (pvc.body.metadata.annotations?.['aether.dev/identity'] !== fingerprint
           || (pod && pod.metadata.annotations?.['aether.dev/identity'] !== fingerprint)) throw new Error('Workspace identity or repository changed; create a new chat');
+      if (pod && ['Failed', 'Succeeded'].includes(pod.status?.phase) && !pod.metadata.deletionTimestamp) {
+        await suspend(id, pod);
+        pod = await getPod(name, id);
+      }
       // A turn arriving during idle deletion must wait for the old pod, then resume its PVC.
       const deletionDeadline = Date.now() + 60000;
       while (pod?.metadata.deletionTimestamp) {
@@ -142,6 +192,8 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
         if (pod && pod.metadata.annotations?.['aether.dev/identity'] !== fingerprint) replyError();
         if (pod?.metadata.deletionTimestamp && Date.now() >= deletionDeadline) throw new Error('Workspace is still stopping');
       }
+      const remote = body.git ? gitBroker.lease(id, body.git) : null;
+      if (!body.git) gitBroker.revokeWorkspace(id);
       if (!pod) {
         pod = await call('POST', `${base}/pods`, {apiVersion: 'v1', kind: 'Pod', metadata: {...metadata,
           annotations: {...metadata.annotations, [activityAnnotation]: String(now())}},
@@ -217,14 +269,18 @@ export function createManager({api, tenant, namespace, image, storageClass, runt
   });
   // Kept off the HTTP API; reconciliation shares operation locks and only deletes owned pods.
   server.suspendIdleWorkspaces = suspendIdleWorkspaces;
+  server.cleanupRetainedWorkspaces = cleanupRetainedWorkspaces;
   let idleTimer;
   const reconcile = async () => {
     try {
       if ((await suspendIdleWorkspaces()).failed) console.error('Idle workspace suspension failed; will retry');
+      const cleanup = await cleanupRetainedWorkspaces();
+      if (cleanup.failed) console.error('Retained workspace cleanup failed; will retry');
+      if (cleanup.deleted) console.info(`Retired ${cleanup.deleted} expired workspace PVCs`);
     } catch {console.error('Idle workspace scan failed; will retry');}
   };
   server.on('listening', () => {
-    if (!idleTimeoutSeconds) return;
+    if (!idleTimeoutSeconds && !retentionSeconds) return;
     idleTimer = setInterval(reconcile, idleCheckIntervalMs);
     idleTimer.unref();
     void reconcile();
@@ -243,6 +299,8 @@ if (process.argv[1] === new URL(import.meta.url).pathname) {
   createManager({gitBroker, imagePullSecrets: JSON.parse(process.env.AETHER_EXECUTION_IMAGE_PULL_SECRETS || '[]'), api, tenant: process.env.AETHER_TENANT_ID, namespace: process.env.AETHER_EXECUTION_NAMESPACE,
     image: process.env.AETHER_EXECUTION_IMAGE, storageClass: process.env.AETHER_EXECUTION_STORAGE_CLASS,
     imagePullPolicy: process.env.AETHER_EXECUTION_PULL_POLICY || 'IfNotPresent',
+    retentionSeconds: Number(process.env.AETHER_EXECUTION_RETENTION_SECONDS ?? '0'),
+    maxWorkspaces: Number(process.env.AETHER_EXECUTION_MAX_WORKSPACES ?? '32'),
     idleTimeoutSeconds: Number(process.env.AETHER_EXECUTION_IDLE_TIMEOUT_SECONDS ?? '1800'),
     runtimeClass: process.env.AETHER_EXECUTION_RUNTIME_CLASS || 'kata'}).listen(9005, '127.0.0.1');
 }

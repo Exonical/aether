@@ -57,6 +57,7 @@ jobs:
       - run: npm ci --prefix runtime
       - run: npm test --prefix runtime
       - run: node --test runtime/execution/test/*.test.mjs
+      - run: node --test runtime/validation/*.test.mjs
       - run: npm test --prefix runtime/models
       - name: Render Kubernetes manifests
         run: |
