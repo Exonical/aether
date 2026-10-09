@@ -101,16 +101,23 @@ function toolCalls(impl: any, chatId: number): AiToolCall[] {
 }
 
 describe('owner-authorized Linux workspace tools', () => {
-  it('holds restricted observations until in-flight pushes finish and refuses a later push', async () => {
-    await withImpl(async impl => {
+  it('holds restricted observations and rejections until in-flight pushes finish and refuses a later push', async () => {
+    await withImpl(async (impl, instance) => {
       let entered!: () => void, release!: () => void;
       const started = new Promise<void>(resolve => {entered = resolve;});
       const held = new Promise<void>(resolve => {release = resolve;});
       impl.getGatekeeperFacet = async () => ({applyAction: async () => {entered(); await held;}});
       const record = {id: 100, gatekeeperId: 1, action: 1, type: 'action', state: 'pending', caller: {from: 'user'},
         createdAt: new Date(), description: {title: 'Push', description: 'Captured pack', pushedCommits: [COMMIT_2]}};
+      impl.storage.actions.put(record);
+      impl.ensureAmbientCapsules = async () => {};
+      impl.markOutputsDirty = () => {};
+      impl.users.get = () => ({whoami: async () => OWNER, getChatContext: async () => ({profile: OWNER}), listGatekeeperVendors: async () => []});
+      using notifyClosed = new NativeRpcStub<() => void>(() => {});
+      using client = await instance.open(OWNER_USER_ID, OWNER.id, notifyClosed);
       const push = impl.applyPendingAction(record, OWNER, false);
       await started;
+      const rejection = client.rejectAction(record.id).catch(error => error);
       let delivered = false;
       const observation = impl.authorizeObservation(1, {title: 'Sensitive', description: 'Private data', containsRestrictedData: true}, {from: 'user'})
         .then(() => {delivered = true;});
@@ -118,9 +125,11 @@ describe('owner-authorized Linux workspace tools', () => {
       expect(delivered).toBe(false);
       expect(impl.storage.containsRestrictedData.get()).toBe(false);
       release(); await push; await observation;
+      expect((await rejection).message).toContain('not pending');
       expect(delivered).toBe(true);
       expect(impl.storage.containsRestrictedData.get()).toBe(true);
-      await expect(impl.applyPendingAction({...record, id: 101, state: 'pending'}, OWNER, false)).rejects.toThrow('sensitive');
+      const later = {...record, id: 101, state: 'pending'}; impl.storage.actions.put(later);
+      await expect(impl.applyPendingAction(later, OWNER, false)).rejects.toThrow('sensitive');
       impl.storage.containsRestrictedData.put(false);
       const ambiguous = {...record, id: 102, state: 'pending'};
       impl.storage.actions.put(ambiguous);

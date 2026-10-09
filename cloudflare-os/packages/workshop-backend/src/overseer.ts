@@ -4865,6 +4865,7 @@ class OverseerImpl implements AgentHooks {
 
   async #applyPendingAction(record: ActionRecord & {type: "action"},
                             resolvedBy: AiChatAuthorInfo, autoApproved: boolean): Promise<void> {
+    if (this.storage.actions.get(record.id)?.state !== 'pending') throw new Error('Action is not pending');
     if (this.storage.containsRestrictedData.get() && record.description.pushedCommits?.length) throw new Error('Git pushes are blocked after observing sensitive data');
     if (autoApproved && this.storage.gatekeepers.get(record.gatekeeperId)?.creationSpec?.type === 'agentGit') throw new Error('Agent Git requires owner approval');
     let gatekeeper = await this.getGatekeeperFacet(record.gatekeeperId);
@@ -11025,6 +11026,15 @@ class OverseerClientInterface extends RpcTarget implements Overseer {
   }
 
   async rejectAction(id: number): Promise<void> {
+    const action = this.impl.storage.actions.get(id);
+    if (action?.type === 'action' && (action.description.pushedCommits?.length
+        || this.impl.storage.gatekeepers.get(action.gatekeeperId)?.creationSpec?.type === 'agentGit')) {
+      return this.impl.withGitPolicyLock(() => this.#rejectAction(id));
+    }
+    return this.#rejectAction(id);
+  }
+
+  async #rejectAction(id: number): Promise<void> {
     let action = this.impl.storage.actions.get(id);
     if (!action) {
       throw new Error(`No such action: ${id}`);
