@@ -1,5 +1,7 @@
 import type {ChatExecutionSelection} from '@gadgets/workshop-shared/execution-workspace';
 import {ComposerExecutionControls} from '../../execution/ComposerExecutionControls';
+import {ComposerModeSelector} from '../../execution/ComposerModeSelector';
+import {useExecutionProfile} from '../../execution/useExecutionProfile';
 import {
   useState,
   useEffect,
@@ -216,6 +218,7 @@ export const ChatComposer = ({
   const [cursorPosition, setCursorPosition] = useState(0);
   const pickerCaretRef = useRef<{key: string | null; text: string}>({key: null, text: ""});
   const { authenticatedApi } = useAuthenticatedApi();
+  const {profile: executionProfile, setProfile: setExecutionProfile, unavailable: agentUnavailable} = useExecutionProfile(authenticatedApi);
   const vendorBranding = useVendorBranding(authenticatedApi);
   const selectedSlashCommandRef = useRef(selectedSlashCommand);
   selectedSlashCommandRef.current = selectedSlashCommand;
@@ -681,6 +684,8 @@ export const ChatComposer = ({
         onDiscard={onDiscardConsoleLogs}
       />
 
+      <ComposerModeSelector value={execution} onChange={setExecution}
+        disabled={isSending || isAgentActive || isBlocked} unavailable={agentUnavailable} />
       {/* Prompt card. Brighter than the page surface (kumo-control vs kumo-base) and gently lifted
           with a soft neutral shadow so the composer reads as a distinct surface instead of blending
           into the canvas; the lift intensifies a touch on focus. */}
@@ -905,6 +910,7 @@ export const ChatComposer = ({
 
         <div className="px-3 pb-1">
           <ComposerExecutionControls api={authenticatedApi} value={execution} onChange={setExecution}
+            profile={executionProfile} onProfileChange={setExecutionProfile} unavailable={agentUnavailable}
             disabled={isSending || isAgentActive || isBlocked} chatId={chatKey} getOverseer={getOverseer} workspaceAvailable={initialExecution?.mode === "agent"} />
         </div>
         {/* Footer row: connection/options left, model + send right */}

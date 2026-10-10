@@ -37,7 +37,13 @@ vi.mock('@cloudflare/kumo', async (importOriginal) => {
 
 vi.mock('./AuthContext', () => {
   const context = {
-    authenticatedApi: { listGatekeeperVendors: async () => [] },
+    authenticatedApi: {
+      listGatekeeperVendors: async () => [],
+      getExecutionProfile: async () => ({
+        enabled: true, identity: {username: 'bryce', uid: 12345, gid: 23456},
+        providers: [], connections: [],
+      }),
+    },
     currentUser: null,
   }
   return {
@@ -86,7 +92,7 @@ function withChatApi(
 
 function renderChat(
   overseer: RpcStub<Overseer>,
-  props: { restricted?: boolean, selectedChatId?: number } = {},
+  props: { restricted?: boolean, selectedChatId?: number, onNavigateToChat?: (id: number | null) => void } = {},
 ) {
   return testRoot.render(
     <ChatInterface
@@ -94,7 +100,7 @@ function renderChat(
       overseer={overseer}
       restricted={props.restricted}
       selectedChatId={props.selectedChatId ?? null}
-      onNavigateToChat={() => {}}
+      onNavigateToChat={props.onNavigateToChat ?? (() => {})}
       pendingConsoleLogCount={0}
       consoleLogPreview=""
       consoleLogSeverity="info"
@@ -105,6 +111,30 @@ function renderChat(
     />,
   )
 }
+
+describe('workspace new-chat execution', () => {
+  it.each(['ask', 'agent'] as const)('creates a %s chat with the composer selection', async (mode) => {
+    const server = makeOverseer()
+    withChatApi(server)
+    const newChat = vi.fn<Overseer['newChat']>(async () => 51)
+    Object.assign(server.overseer, {newChat})
+    const onNavigateToChat = vi.fn<(id: number | null) => void>()
+    await renderChat(server.overseer, {onNavigateToChat})
+
+    const agent = [...document.querySelectorAll<HTMLButtonElement>('[aria-label="Chat mode"] button')]
+      .find(button => button.textContent === 'Agent')!
+    expect(agent.disabled).toBe(false)
+    if (mode === 'agent') await act(async () => agent.click())
+    const textarea = document.querySelector<HTMLTextAreaElement>('[role="combobox"]')!
+    await act(async () => {
+      Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, 'value')!.set!.call(textarea, 'Run tests')
+      textarea.dispatchEvent(new Event('input', {bubbles: true}))
+    })
+    await act(async () => textarea.dispatchEvent(new KeyboardEvent('keydown', {key: 'Enter', bubbles: true})))
+    expect(newChat).toHaveBeenCalledWith('Run tests', null, undefined, undefined, undefined, {mode, environment: 'rhel10'})
+    expect(onNavigateToChat).toHaveBeenCalledWith(51)
+  })
+})
 
 const actionMessage = {
   chatId: 1,
